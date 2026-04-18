@@ -11,10 +11,11 @@
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>com.googleusercontent.apps.27032719106-784n1s2hl2qtfpbfkam2vm620akug97g</string>
+				<string>com.googleusercontent.apps.27032719106-co024attcbtvpd3hfbk6860t9ndao9lu</string>
 			</array>
 		</dict>
 	</array>
-	
+
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
