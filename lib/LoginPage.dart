@@ -3,7 +3,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 
 final GoogleSignIn _googleSignIn = GoogleSignIn(
   clientId:
-      '27032719106-co024attcbtvpd3hfbk6860t9ndao9lu.apps.googleusercontent.com',
+      '27032719106-784n1s2hl2qtfpbfkam2vm620akug97g.apps.googleusercontent.com',
   scopes: ['email'],
 );
 
