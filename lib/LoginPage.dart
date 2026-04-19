@@ -24,7 +24,10 @@ class _LoginpageState extends State<Loginpage> {
 
   Future<void> _initSignIn() async {
     final clientId = await ConfigService.getClientId();
-    _googleSignIn = GoogleSignIn(clientId: clientId, scopes: ['email']);
+    _googleSignIn = GoogleSignIn(
+      clientId: clientId,
+      scopes: ['email', 'https://www.googleapis.com/auth/youtube'],
+    );
     UserSession().googleSignIn = _googleSignIn;
     _trySilentSignIn();
   }

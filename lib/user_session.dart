@@ -11,6 +11,7 @@ class UserSession {
   String get displayName => user?.displayName ?? '';
   String get email => user?.email ?? '';
   String get photoUrl => user?.photoUrl ?? '';
+  String? ytMusicCookies;
 
   bool get isLoggedIn => user != null;
 

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:dart_ytmusic_api/dart_ytmusic_api.dart';
+import 'package:music_player/services/ytmusic_auth_service.dart';
+import 'package:music_player/user_session.dart';
 
 class Homepage extends StatefulWidget {
   const Homepage({super.key});
@@ -22,7 +24,16 @@ class _HomepageState extends State<Homepage> {
 
   Future<void> _loadHome() async {
     try {
-      await _ytmusic.initialize();
+      final cookies =
+          UserSession().ytMusicCookies ??
+          await YtmusicAuthService.getYTMusicCookies();
+
+      if (cookies != null) {
+        await _ytmusic.initialize(cookies: cookies);
+      } else {
+        await _ytmusic.initialize();
+      }
+
       final sections = await _ytmusic.getHomeSections();
       setState(() {
         _sections = sections;
