@@ -6,6 +6,7 @@ class UserSession {
   UserSession._internal();
 
   GoogleSignInAccount? user;
+  GoogleSignIn? googleSignIn;
 
   String get displayName => user?.displayName ?? '';
   String get email => user?.email ?? '';
@@ -13,5 +14,8 @@ class UserSession {
 
   bool get isLoggedIn => user != null;
 
-  void clear() => user = null;
+  void clear() {
+    user = null;
+    googleSignIn = null;
+  }
 }
