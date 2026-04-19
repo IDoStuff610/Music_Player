@@ -7,44 +7,60 @@ class YtmusicAuthService {
       final googleUser = UserSession().googleSignIn?.currentUser;
       if (googleUser == null) return null;
 
-      // get the OAuth access token
       final auth = await googleUser.authentication;
       final accessToken = auth.accessToken;
       if (accessToken == null) return null;
 
-      // make a request to YouTube Music with the access token
-      final response = await http.get(
+      // collect all cookies from multiple requests
+      final cookieMap = <String, String>{};
+
+      // request 1 - youtube.com to get SAPISID, SSID, HSID
+      final r1 = await http.get(
+        Uri.parse('https://www.youtube.com'),
+        headers: {
+          'Authorization': 'Bearer $accessToken',
+          'User-Agent':
+              'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15',
+          'Accept': 'text/html',
+        },
+      );
+      _parseCookies(r1.headers['set-cookie'], cookieMap);
+
+      // request 2 - music.youtube.com to get music-specific cookies
+      final r2 = await http.get(
         Uri.parse('https://music.youtube.com'),
         headers: {
           'Authorization': 'Bearer $accessToken',
           'User-Agent':
               'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15',
+          'Accept': 'text/html',
+          'Cookie': cookieMap.entries
+              .map((e) => '${e.key}=${e.value}')
+              .join('; '),
         },
       );
-
-      // extract cookies from response headers
-      final rawCookies = response.headers['set-cookie'];
-      if (rawCookies == null) return null;
-
-      // parse and format cookies into a single string
-      final cookieMap = <String, String>{};
-      for (final cookie in rawCookies.split(',')) {
-        final parts = cookie.trim().split(';')[0].split('=');
-        if (parts.length >= 2) {
-          cookieMap[parts[0].trim()] = parts.sublist(1).join('=').trim();
-        }
-      }
+      _parseCookies(r2.headers['set-cookie'], cookieMap);
 
       if (cookieMap.isEmpty) return null;
 
-      // save to session cache 👈 now inside the function
-      UserSession().ytMusicCookies = cookieMap.entries
+      final cookieString = cookieMap.entries
           .map((e) => '${e.key}=${e.value}')
           .join('; ');
 
-      return UserSession().ytMusicCookies;
+      UserSession().ytMusicCookies = cookieString;
+      return cookieString;
     } catch (e) {
       return null;
+    }
+  }
+
+  static void _parseCookies(String? raw, Map<String, String> map) {
+    if (raw == null) return;
+    for (final cookie in raw.split(',')) {
+      final parts = cookie.trim().split(';')[0].split('=');
+      if (parts.length >= 2) {
+        map[parts[0].trim()] = parts.sublist(1).join('=').trim();
+      }
     }
   }
 }
