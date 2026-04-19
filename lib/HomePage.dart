@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:dart_ytmusic_api/dart_ytmusic_api.dart';
-import 'package:music_player/services/ytmusic_auth_service.dart';
+//import 'package:music_player/services/ytmusic_auth_service.dart';
 import 'package:music_player/user_session.dart';
+import 'package:music_player/services/ytmusic_webview_page.dart';
 
 class Homepage extends StatefulWidget {
   const Homepage({super.key});
@@ -24,16 +25,11 @@ class _HomepageState extends State<Homepage> {
 
   Future<void> _loadHome() async {
     try {
-      final cookies =
-          UserSession().ytMusicCookies ??
-          await YtmusicAuthService.getYTMusicCookies();
-
-      // temporarily show cookies on screen
-      setState(() {
-        _error = 'Cookies: $cookies';
-        _isLoading = false;
-      });
-      return; // 👈 stops here, won't load music yet
+      String? cookies = UserSession().ytMusicCookies;
+      cookies ??= await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (context) => const YTMusicWebViewPage()),
+      );
 
       if (cookies != null) {
         await _ytmusic.initialize(cookies: cookies);
