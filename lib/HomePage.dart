@@ -28,6 +28,13 @@ class _HomepageState extends State<Homepage> {
           UserSession().ytMusicCookies ??
           await YtmusicAuthService.getYTMusicCookies();
 
+      // temporarily show cookies on screen
+      setState(() {
+        _error = 'Cookies: $cookies';
+        _isLoading = false;
+      });
+      return; // 👈 stops here, won't load music yet
+
       if (cookies != null) {
         await _ytmusic.initialize(cookies: cookies);
       } else {
