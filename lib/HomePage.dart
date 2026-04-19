@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:music_player/user_session.dart';
+import 'package:dart_ytmusic_api/dart_ytmusic_api.dart';
 
 class Homepage extends StatefulWidget {
   const Homepage({super.key});
@@ -9,98 +9,176 @@ class Homepage extends StatefulWidget {
 }
 
 class _HomepageState extends State<Homepage> {
-  final _user = UserSession();
+  final YTMusic _ytmusic = YTMusic();
+  List<dynamic> _sections = [];
+  bool _isLoading = true;
+  String? _error;
 
-  int _imageRetryCount = 0;
-  static const int _maxRetries = 5;
-  Key _imageKey = UniqueKey();
+  @override
+  void initState() {
+    super.initState();
+    _loadHome();
+  }
 
-  void _retryImage() {
-    if (_imageRetryCount < _maxRetries) {
+  Future<void> _loadHome() async {
+    try {
+      await _ytmusic.initialize();
+      final sections = await _ytmusic.getHomeSections();
       setState(() {
-        _imageRetryCount++;
-        _imageKey = UniqueKey();
+        _sections = sections;
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _error = e.toString();
+        _isLoading = false;
       });
     }
   }
 
+  // Change the build method - remove the outer Scaffold, just return the body directly
   @override
   Widget build(BuildContext context) {
-    final String? photoUrl = _user.photoUrl;
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            GestureDetector(
-              onTap: () => setState(() {
-                _imageRetryCount = 0;
-                _imageKey = UniqueKey();
-              }),
-              child: CircleAvatar(
-                radius: 50,
-                backgroundColor: Colors.grey,
-                child: photoUrl != null
-                    ? ClipOval(
-                        child: Image.network(
-                          photoUrl,
-                          key: _imageKey,
-                          width: 100,
-                          height: 100,
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) {
-                            if (_imageRetryCount < _maxRetries) {
-                              Future.delayed(
-                                const Duration(seconds: 2),
-                                _retryImage,
-                              );
-                              return const CircularProgressIndicator(
-                                color: Colors.white,
-                              );
-                            }
-                            return Text(
-                              _user.displayName.isNotEmpty
-                                  ? _user.displayName[0].toUpperCase()
-                                  : '?',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 40,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            );
-                          },
-                        ),
-                      )
-                    : Text(
-                        _user.displayName.isNotEmpty
-                            ? _user.displayName[0].toUpperCase()
-                            : '?',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 40,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-              ),
+    return _isLoading
+        ? const Center(child: CircularProgressIndicator(color: Colors.white))
+        : _error != null
+        ? Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.error_outline, color: Colors.red, size: 48),
+                const SizedBox(height: 12),
+                Text(
+                  _error!, // 👈 show actual error
+                  style: const TextStyle(color: Colors.red, fontSize: 12),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: () {
+                    setState(() {
+                      _isLoading = true;
+                      _error = null;
+                    });
+                    _loadHome();
+                  },
+                  child: const Text(
+                    'Retry',
+                    style: TextStyle(color: Colors.blueAccent),
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 16),
-            Text(
-              _user.displayName,
+          )
+        : RefreshIndicator(
+            onRefresh: () async {
+              setState(() => _isLoading = true);
+              await _loadHome();
+            },
+            child: ListView.builder(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              itemCount: _sections.length,
+              itemBuilder: (context, index) => _buildSection(_sections[index]),
+            ),
+          );
+  }
+
+  Widget _buildSection(dynamic section) {
+    final String title = section.title ?? '';
+    final List<dynamic> contents = section.contents ?? [];
+
+    if (contents.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (title.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: Text(
+              title,
               style: const TextStyle(
                 color: Colors.white,
-                fontSize: 22,
+                fontSize: 18,
                 fontWeight: FontWeight.bold,
               ),
             ),
-            const SizedBox(height: 4),
-            Text(
-              _user.email,
-              style: TextStyle(color: Colors.grey, fontSize: 14),
+          ),
+        SizedBox(
+          height: 200,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            itemCount: contents.length,
+            itemBuilder: (context, index) {
+              return _buildSongCard(contents[index]);
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSongCard(dynamic item) {
+    final String title = item.name ?? item.title ?? 'Unknown';
+    final String subtitle =
+        item.artist?.name ??
+        (item.artists != null && item.artists.isNotEmpty
+            ? item.artists[0].name
+            : '');
+    final String? thumbnailUrl =
+        item.thumbnails != null && item.thumbnails.isNotEmpty
+        ? item.thumbnails.last.url
+        : null;
+
+    return GestureDetector(
+      onTap: () {},
+      child: Container(
+        width: 140,
+        margin: const EdgeInsets.symmetric(horizontal: 6),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadiusGeometry.circular(8),
+              child: thumbnailUrl != null
+                  ? Image.network(
+                      thumbnailUrl,
+                      width: 140,
+                      height: 140,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => _placeholderThumbnail(),
+                    )
+                  : _placeholderThumbnail(),
             ),
+            const SizedBox(height: 6),
+            Text(
+              title,
+              style: const TextStyle(color: Colors.white, fontSize: 13),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            if (subtitle.isNotEmpty)
+              Text(
+                subtitle,
+                style: const TextStyle(color: Colors.grey, fontSize: 11),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _placeholderThumbnail() {
+    return Container(
+      width: 140,
+      height: 140,
+      decoration: BoxDecoration(
+        color: Colors.grey.shade800,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: const Icon(Icons.music_note, color: Colors.grey, size: 40),
     );
   }
 }

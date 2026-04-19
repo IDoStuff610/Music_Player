@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:music_player/HomePage.dart';
 import 'package:music_player/LoginPage.dart';
 import 'package:music_player/user_session.dart';
 //import 'package:google_sign_in/google_sign_in.dart';
@@ -16,8 +17,9 @@ class _MainhomepageState extends State<Mainhomepage> {
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: _appbar(),
-      bottomNavigationBar: _BottomNav(),
+      body: const Homepage(),
       drawer: _Drawer(),
+      bottomNavigationBar: _BottomNav(),
     );
   }
 
