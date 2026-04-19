@@ -11,35 +11,48 @@ class YtmusicAuthService {
       final accessToken = auth.accessToken;
       if (accessToken == null) return null;
 
-      // collect all cookies from multiple requests
       final cookieMap = <String, String>{};
 
-      // request 1 - youtube.com to get SAPISID, SSID, HSID
+      // use accounts.google.com to get full session cookies
       final r1 = await http.get(
-        Uri.parse('https://www.youtube.com'),
+        Uri.parse(
+          'https://accounts.google.com/o/oauth2/auth?client_id=770336754352-r8dl0o1v5bpjl88de4g4lh1i4tlt1hgh.apps.googleusercontent.com&response_type=permission&scope=https://www.googleapis.com/auth/youtube',
+        ),
         headers: {
           'Authorization': 'Bearer $accessToken',
           'User-Agent':
               'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15',
-          'Accept': 'text/html',
         },
       );
       _parseCookies(r1.headers['set-cookie'], cookieMap);
 
-      // request 2 - music.youtube.com to get music-specific cookies
+      // then hit youtube.com with those cookies
       final r2 = await http.get(
-        Uri.parse('https://music.youtube.com'),
+        Uri.parse('https://www.youtube.com/'),
         headers: {
           'Authorization': 'Bearer $accessToken',
-          'User-Agent':
-              'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15',
-          'Accept': 'text/html',
           'Cookie': cookieMap.entries
               .map((e) => '${e.key}=${e.value}')
               .join('; '),
+          'User-Agent':
+              'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15',
         },
       );
       _parseCookies(r2.headers['set-cookie'], cookieMap);
+
+      // finally hit music.youtube.com
+      final r3 = await http.get(
+        Uri.parse('https://music.youtube.com/'),
+        headers: {
+          'Authorization': 'Bearer $accessToken',
+          'Cookie': cookieMap.entries
+              .map((e) => '${e.key}=${e.value}')
+              .join('; '),
+          'User-Agent':
+              'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15',
+        },
+      );
+      _parseCookies(r3.headers['set-cookie'], cookieMap);
 
       if (cookieMap.isEmpty) return null;
 
