@@ -20,12 +20,8 @@ class _YTMusicWebViewPageState extends State<YTMusicWebViewPage> {
 
     final cookies = await cookieManager.getCookies(url: url);
 
-    // check if we have the important cookies
-    final hasSapisid = cookies.any((c) => c.name == 'SAPISID');
-    final hasSecure3PAPISID = cookies.any((c) => c.name == '__Secure-3PAPISID');
-
-    if (hasSapisid || hasSecure3PAPISID) {
-      // build cookie string
+    // temporarily capture everything
+    if (cookies.isNotEmpty) {
       final cookieString = cookies
           .map((c) => '${c.name}=${c.value}')
           .join('; ');

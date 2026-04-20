@@ -31,6 +31,12 @@ class _HomepageState extends State<Homepage> {
         MaterialPageRoute(builder: (context) => const YTMusicWebViewPage()),
       );
 
+      setState(() {
+        _error = 'Cookies: $cookies';
+        _isLoading = false;
+      });
+      return;
+
       if (cookies != null) {
         await _ytmusic.initialize(cookies: cookies);
       } else {
