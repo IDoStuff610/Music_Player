@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:music_player/services/ytmusic_api_service.dart';
 import 'package:music_player/services/ytmusic_auth_service.dart';
 import 'package:music_player/user_session.dart';
+import 'package:music_player/services/audio_player_service.dart';
 
 class Homepage extends StatefulWidget {
   const Homepage({super.key});
@@ -151,7 +152,7 @@ class _HomepageState extends State<Homepage> {
     return GestureDetector(
       onTap: () {
         // playback coming next!
-        debugPrint('Tapped: ${item.title} — videoId: ${item.videoId}');
+        AudioPlayerService().play(item);
       },
       child: Container(
         width: 140,

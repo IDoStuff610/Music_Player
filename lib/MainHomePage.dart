@@ -5,8 +5,11 @@ import 'package:music_player/LoginPage.dart';
 import 'package:music_player/user_session.dart';
 //import 'package:music_player/services/ytmusic_api_service.dart';
 //import 'package:music_player/services/ytmusic_auth_service.dart';
+import 'package:music_player/widgets/player_sheet.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+
+// ─── Thumbnail Debug Page ───────────────────────────────────────────────────
 
 class _ThumbnailDebugPage extends StatefulWidget {
   const _ThumbnailDebugPage();
@@ -61,8 +64,6 @@ class _ThumbnailDebugPageState extends State<_ThumbnailDebugPage> {
       );
 
       final data = jsonDecode(response.body);
-
-      // Drill into first shelf, first item
       final contents =
           data['contents']?['singleColumnBrowseResultsRenderer']?['tabs']?[0]?['tabRenderer']?['content']?['sectionListRenderer']?['contents']
               as List?;
@@ -78,13 +79,9 @@ class _ThumbnailDebugPageState extends State<_ThumbnailDebugPage> {
       final firstShelf =
           contents.first['musicCarouselShelfRenderer'] ??
           contents.first['musicImmersiveCarouselShelfRenderer'];
-
       final firstItem = (firstShelf?['contents'] as List?)?.first;
-
-      // Dump the raw JSON of the first item so we can see the thumbnail path
       final raw = const JsonEncoder.withIndent('  ').convert(firstItem);
 
-      // Split into chunks of 200 chars so it fits on screen
       final chunks = <String>[];
       for (var i = 0; i < raw.length; i += 200) {
         chunks.add(
@@ -155,6 +152,8 @@ class _ThumbnailDebugPageState extends State<_ThumbnailDebugPage> {
   }
 }
 
+// ─── Main Home Page ──────────────────────────────────────────────────────────
+
 class Mainhomepage extends StatefulWidget {
   const Mainhomepage({super.key});
 
@@ -183,27 +182,31 @@ class _MainhomepageState extends State<Mainhomepage> {
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: _appbar(),
-      body: Column(
-        children: [
-          // Debug panel slides in when toggled
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 300),
-            height: _showDebug ? 260 : 0,
-            child: _showDebug ? _buildDebugPanel() : const SizedBox.shrink(),
-          ),
-          const Expanded(child: Homepage()),
-        ],
-      ),
       drawer: _buildDrawer(),
       bottomNavigationBar: _buildBottomNav(),
+      body: Stack(
+        children: [
+          Column(
+            children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 300),
+                height: _showDebug ? 260 : 0,
+                child: _showDebug
+                    ? _buildDebugPanel()
+                    : const SizedBox.shrink(),
+              ),
+              const Expanded(child: Homepage()),
+            ],
+          ),
+          const Align(alignment: Alignment.bottomCenter, child: PlayerSheet()),
+        ],
+      ),
     );
   }
 
   Widget _buildDebugPanel() {
     final cookies = UserSession().ytMusicCookies;
     final lines = cookies?.split('; ') ?? [];
-
-    // Highlight important cookies
     final importantKeys = [
       'SAPISID',
       '__Secure-3PAPISID',
@@ -242,7 +245,6 @@ class _MainhomepageState extends State<Mainhomepage> {
                 ),
               ),
               const Spacer(),
-              // Copy all cookies button
               if (cookies != null)
                 GestureDetector(
                   onTap: () {
@@ -332,7 +334,6 @@ class _MainhomepageState extends State<Mainhomepage> {
         ),
       ),
       actions: [
-        // Add this to your actions list in _appbar()
         IconButton(
           onPressed: () => Navigator.push(
             context,
@@ -342,8 +343,6 @@ class _MainhomepageState extends State<Mainhomepage> {
           ),
           icon: const Icon(Icons.image_search, color: Colors.white),
         ),
-
-        // 🍪 Debug toggle button
         IconButton(
           onPressed: () => setState(() => _showDebug = !_showDebug),
           icon: Text(
