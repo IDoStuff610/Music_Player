@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:music_player/LoginPage.dart';
+import 'package:music_player/user_session.dart';
 //import 'package:music_player/MainHomePage.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await UserSession().loadSavedCookies(); // restore cookies before app loads
   runApp(const MyApp());
 }
 

@@ -38,7 +38,7 @@ class _LoginpageState extends State<Loginpage> {
       final account = await _googleSignIn!.signInSilently();
       if (account != null && mounted) {
         UserSession().user = account;
-        // Already have cookies from last session? Skip WebView
+        // If we already have saved cookies, go straight home
         if (UserSession().ytMusicCookies != null) {
           _goToHome();
         } else {
@@ -72,7 +72,7 @@ class _LoginpageState extends State<Loginpage> {
     );
 
     if (cookies != null) {
-      UserSession().ytMusicCookies = cookies;
+      await UserSession().saveCookies(cookies);
     }
 
     UserSession().user ??= await _googleSignIn?.signInSilently();

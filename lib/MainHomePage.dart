@@ -372,7 +372,7 @@ class _MainhomepageState extends State<Mainhomepage> {
             ),
             onTap: () async {
               await UserSession().googleSignIn?.signOut();
-              UserSession().clear();
+              await UserSession().clear();
               if (mounted) {
                 Navigator.pushReplacement(
                   context,

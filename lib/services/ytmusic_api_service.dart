@@ -52,6 +52,8 @@ class YTMusicApiService {
     final sections = <MusicSection>[];
 
     try {
+      // TEMP DEBUG - remove after fixing
+
       final contents =
           json['contents']['singleColumnBrowseResultsRenderer']['tabs'][0]['tabRenderer']['content']['sectionListRenderer']['contents']
               as List;
@@ -75,6 +77,17 @@ class YTMusicApiService {
         if (title != null && items.isNotEmpty) {
           sections.add(MusicSection(title: title, items: items));
         }
+
+        // TEMP DEBUG - remove after fixing
+        if (sections.isEmpty && contents.isNotEmpty) {
+          final firstShelf =
+              contents.first['musicCarouselShelfRenderer'] ??
+              contents.first['musicImmersiveCarouselShelfRenderer'];
+          if (firstShelf != null) {
+            final firstItem = (firstShelf['contents'] as List?)?.first;
+            print('RAW ITEM: $firstItem');
+          }
+        }
       }
     } catch (e) {
       // YT Music JSON structure can shift — log and continue
@@ -85,7 +98,6 @@ class YTMusicApiService {
   }
 
   MusicItem? _parseItem(Map<String, dynamic> item) {
-    // Handles both songs and albums/playlists
     final renderer =
         item['musicTwoRowItemRenderer'] ??
         item['musicResponsiveListItemRenderer'];
@@ -94,10 +106,27 @@ class YTMusicApiService {
     final title = _extractText(renderer['title']);
     final subtitle = _extractText(renderer['subtitle']);
 
-    final thumbnails =
-        renderer['thumbnail']?['musicThumbnailRenderer']?['thumbnail']?['thumbnails']
-            as List?;
-    final thumbUrl = thumbnails?.last?['url'];
+    // Try every possible thumbnail path YT Music uses
+    String? thumbUrl;
+
+    final thumbPaths = [
+      // musicTwoRowItemRenderer path
+      renderer['thumbnail']?['musicThumbnailRenderer']?['thumbnail']?['thumbnails'],
+      // overlay path
+      renderer['overlay']?['musicItemThumbnailOverlayRenderer']?['thumbnail']?['musicThumbnailRenderer']?['thumbnail']?['thumbnails'],
+      // direct thumbnails
+      renderer['thumbnails'],
+      // thumbnail > thumbnails directly
+      renderer['thumbnail']?['thumbnails'],
+    ];
+
+    for (final thumbList in thumbPaths) {
+      if (thumbList != null && thumbList is List && thumbList.isNotEmpty) {
+        // Pick the largest thumbnail (last in list)
+        thumbUrl = thumbList.last['url'] as String?;
+        if (thumbUrl != null) break;
+      }
+    }
 
     final videoId = _extractVideoId(renderer);
 
