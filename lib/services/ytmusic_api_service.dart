@@ -106,26 +106,16 @@ class YTMusicApiService {
     final title = _extractText(renderer['title']);
     final subtitle = _extractText(renderer['subtitle']);
 
-    // Try every possible thumbnail path YT Music uses
     String? thumbUrl;
 
-    final thumbPaths = [
-      // musicTwoRowItemRenderer path
-      renderer['thumbnail']?['musicThumbnailRenderer']?['thumbnail']?['thumbnails'],
-      // overlay path
-      renderer['overlay']?['musicItemThumbnailOverlayRenderer']?['thumbnail']?['musicThumbnailRenderer']?['thumbnail']?['thumbnails'],
-      // direct thumbnails
-      renderer['thumbnails'],
-      // thumbnail > thumbnails directly
-      renderer['thumbnail']?['thumbnails'],
-    ];
+    final thumbList =
+        // musicTwoRowItemRenderer uses "thumbnailRenderer" (not "thumbnail")
+        renderer['thumbnailRenderer']?['musicThumbnailRenderer']?['thumbnail']?['thumbnails'] ??
+        // musicResponsiveListItemRenderer fallback
+        renderer['thumbnail']?['musicThumbnailRenderer']?['thumbnail']?['thumbnails'];
 
-    for (final thumbList in thumbPaths) {
-      if (thumbList != null && thumbList is List && thumbList.isNotEmpty) {
-        // Pick the largest thumbnail (last in list)
-        thumbUrl = thumbList.last['url'] as String?;
-        if (thumbUrl != null) break;
-      }
+    if (thumbList != null && thumbList is List && thumbList.isNotEmpty) {
+      thumbUrl = thumbList.last['url'] as String?;
     }
 
     final videoId = _extractVideoId(renderer);
