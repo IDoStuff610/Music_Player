@@ -22,7 +22,7 @@
 	</array>
 	<key>NSAppTransportSecurity</key>
 	<dict>
-		<string>NSAllowsArbitraryLoads</string>
+		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
 
