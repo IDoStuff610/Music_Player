@@ -151,11 +151,10 @@ class _HomepageState extends State<Homepage> {
   Widget _buildSongCard(MusicItem item) {
     return InkWell(
       onTap: () {
-        debugPrint('Tapped: ${item.title} — videoId: ${item.videoId}');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Loading: ${item.title}'),
-            duration: const Duration(seconds: 2),
+            content: Text('videoId: ${item.videoId ?? "NULL"}'),
+            duration: const Duration(seconds: 3),
           ),
         );
         AudioPlayerService().play(item);
