@@ -26,8 +26,8 @@ class AudioPlayerService extends ChangeNotifier {
   Stream<Duration?> get durationStream => _player.durationStream;
 
   Future<void> play(MusicItem item) async {
-    if (item.videoId == null) {
-      error = 'No video ID for this track';
+    if (item.videoId == null && item.playlistId == null) {
+      error = 'No video ID or playlist ID for this track';
       notifyListeners();
       return;
     }
@@ -38,9 +38,23 @@ class AudioPlayerService extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // Get audio-only stream URL via youtube_explode (no ads)
+      String? videoIdToPlay = item.videoId;
+
+      // If no direct videoId, get first track from playlist
+      if (videoIdToPlay == null && item.playlistId != null) {
+        final playlist = await _yt.playlists.getVideos(item.playlistId!).first;
+        videoIdToPlay = playlist.id.value;
+      }
+
+      if (videoIdToPlay == null) {
+        error = 'Could not find a track to play';
+        isLoading = false;
+        notifyListeners();
+        return;
+      }
+
       final manifest = await _yt.videos.streamsClient.getManifest(
-        item.videoId!,
+        videoIdToPlay,
       );
       final audioStream = manifest.audioOnly.withHighestBitrate();
       final streamUrl = audioStream.url.toString();
@@ -49,7 +63,7 @@ class AudioPlayerService extends ChangeNotifier {
         AudioSource.uri(
           Uri.parse(streamUrl),
           tag: MediaItem(
-            id: item.videoId!,
+            id: videoIdToPlay,
             title: item.title,
             artist: item.subtitle ?? '',
             artUri: item.thumbnailUrl != null
@@ -62,7 +76,7 @@ class AudioPlayerService extends ChangeNotifier {
       await _player.play();
     } catch (e) {
       error = e.toString();
-      debugPrint('Audio error: $e');
+      currentItem = null;
     } finally {
       isLoading = false;
       notifyListeners();

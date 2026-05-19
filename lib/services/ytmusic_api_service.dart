@@ -107,24 +107,24 @@ class YTMusicApiService {
     final subtitle = _extractText(renderer['subtitle']);
 
     String? thumbUrl;
-
     final thumbList =
-        // musicTwoRowItemRenderer uses "thumbnailRenderer" (not "thumbnail")
         renderer['thumbnailRenderer']?['musicThumbnailRenderer']?['thumbnail']?['thumbnails'] ??
-        // musicResponsiveListItemRenderer fallback
         renderer['thumbnail']?['musicThumbnailRenderer']?['thumbnail']?['thumbnails'];
 
     if (thumbList != null && thumbList is List && thumbList.isNotEmpty) {
       thumbUrl = thumbList.last['url'] as String?;
     }
 
+    // Try to get videoId first, then fall back to playlistId
     final videoId = _extractVideoId(renderer);
+    final playlistId = _extractPlaylistId(renderer);
 
     return MusicItem(
       title: title ?? 'Unknown',
       subtitle: subtitle,
       thumbnailUrl: thumbUrl,
       videoId: videoId,
+      playlistId: playlistId,
     );
   }
 
@@ -139,10 +139,30 @@ class YTMusicApiService {
 
   String? _extractVideoId(Map<String, dynamic> renderer) {
     try {
-      return renderer['overlay']['musicItemThumbnailOverlayRenderer']['content']['musicPlayButtonRenderer']['playNavigationEndpoint']['watchEndpoint']['videoId'];
-    } catch (_) {
-      return null;
-    }
+      // Try overlay play button first
+      return renderer['overlay']?['musicItemThumbnailOverlayRenderer']?['content']?['musicPlayButtonRenderer']?['playNavigationEndpoint']?['watchEndpoint']?['videoId'];
+    } catch (_) {}
+
+    try {
+      // Try navigation endpoint directly
+      return renderer['navigationEndpoint']?['watchEndpoint']?['videoId'];
+    } catch (_) {}
+
+    return null;
+  }
+
+  String? _extractPlaylistId(Map<String, dynamic> renderer) {
+    try {
+      // From overlay play button (watchPlaylistEndpoint)
+      return renderer['overlay']?['musicItemThumbnailOverlayRenderer']?['content']?['musicPlayButtonRenderer']?['playNavigationEndpoint']?['watchPlaylistEndpoint']?['playlistId'];
+    } catch (_) {}
+
+    try {
+      // From navigation endpoint browseEndpoint
+      return renderer['navigationEndpoint']?['browseEndpoint']?['browseId'];
+    } catch (_) {}
+
+    return null;
   }
 }
 
@@ -159,10 +179,13 @@ class MusicItem {
   final String? subtitle;
   final String? thumbnailUrl;
   final String? videoId;
+  final String? playlistId;
+
   MusicItem({
     required this.title,
     this.subtitle,
     this.thumbnailUrl,
     this.videoId,
+    this.playlistId,
   });
 }
