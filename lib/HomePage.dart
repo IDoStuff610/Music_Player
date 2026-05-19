@@ -151,6 +151,13 @@ class _HomepageState extends State<Homepage> {
   Widget _buildSongCard(MusicItem item) {
     return InkWell(
       onTap: () {
+        debugPrint('Tapped: ${item.title} — videoId: ${item.videoId}');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Loading: ${item.title}'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
         AudioPlayerService().play(item);
       },
       borderRadius: BorderRadius.circular(8),
