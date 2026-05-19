@@ -149,11 +149,11 @@ class _HomepageState extends State<Homepage> {
   }
 
   Widget _buildSongCard(MusicItem item) {
-    return GestureDetector(
+    return InkWell(
       onTap: () {
-        // playback coming next!
         AudioPlayerService().play(item);
       },
+      borderRadius: BorderRadius.circular(8),
       child: Container(
         width: 140,
         margin: const EdgeInsets.symmetric(horizontal: 6),
