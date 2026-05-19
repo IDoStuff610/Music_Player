@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
-//import 'package:music_player/HomePage.dart';
 import 'package:music_player/MainHomePage.dart';
 import 'package:music_player/system_setting/settings_page.dart';
 import 'package:music_player/system_setting/config_service.dart';
 import 'package:music_player/user_session.dart';
+import 'package:music_player/services/ytmusic_webview_page.dart'; // <-- add this
 
 GoogleSignIn? _googleSignIn;
 
@@ -38,11 +38,44 @@ class _LoginpageState extends State<Loginpage> {
       final account = await _googleSignIn!.signInSilently();
       if (account != null && mounted) {
         UserSession().user = account;
-        _goToHome();
+        // Already have cookies from last session? Skip WebView
+        if (UserSession().ytMusicCookies != null) {
+          _goToHome();
+        } else {
+          await _fetchCookiesThenGoHome();
+        }
       }
     } catch (e) {
       debugPrint('Silent sign in error: $e');
     }
+  }
+
+  Future<void> _handleSignIn() async {
+    if (_googleSignIn == null) return;
+    try {
+      final account = await _googleSignIn!.signIn();
+      if (account != null && mounted) {
+        UserSession().user = account;
+        await _fetchCookiesThenGoHome();
+      }
+    } catch (e) {
+      debugPrint('Sign in error: $e');
+    }
+  }
+
+  Future<void> _fetchCookiesThenGoHome() async {
+    if (!mounted) return;
+
+    final cookies = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(builder: (context) => const YTMusicWebViewPage()),
+    );
+
+    if (cookies != null) {
+      UserSession().ytMusicCookies = cookies;
+    }
+
+    if (mounted) _goToHome();
   }
 
   void _goToHome() {
@@ -50,19 +83,6 @@ class _LoginpageState extends State<Loginpage> {
       context,
       MaterialPageRoute(builder: (context) => const Mainhomepage()),
     );
-  }
-
-  Future<void> _handleSignIn() async {
-    if (_googleSignIn == null) return;
-    try {
-      await _googleSignIn!.signIn();
-      if (_googleSignIn!.currentUser != null && mounted) {
-        UserSession().user = _googleSignIn!.currentUser;
-        _goToHome();
-      }
-    } catch (e) {
-      debugPrint('Sign in errors: $e');
-    }
   }
 
   @override

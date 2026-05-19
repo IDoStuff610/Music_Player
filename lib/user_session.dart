@@ -18,5 +18,6 @@ class UserSession {
   void clear() {
     user = null;
     googleSignIn = null;
+    ytMusicCookies = null;
   }
 }

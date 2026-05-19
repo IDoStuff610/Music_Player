@@ -1,79 +1,57 @@
-import 'package:http/http.dart' as http;
-import 'package:music_player/user_session.dart';
+import 'dart:convert';
+import 'package:crypto/crypto.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 
-class YtmusicAuthService {
-  static Future<String?> getYTMusicCookies() async {
-    try {
-      final googleUser = UserSession().googleSignIn?.currentUser;
-      if (googleUser == null) return null;
+class YTMusicAuthService {
+  static const _ytMusicUrl = 'https://music.youtube.com';
 
-      final auth = await googleUser.authentication;
-      final accessToken = auth.accessToken;
-      if (accessToken == null) return null;
+  Map<String, String> _cookies = {};
+  String? _sapisid;
 
-      final cookieMap = <String, String>{};
+  // Call this after your existing Google Sign In
+  Future<bool> extractCookiesViaWebView(GoogleSignInAccount googleUser) async {
+    final googleAuth = await googleUser.authentication;
+    final accessToken = googleAuth.accessToken;
 
-      // use accounts.google.com to get full session cookies
-      final r1 = await http.get(
-        Uri.parse(
-          'https://accounts.google.com/o/oauth2/auth?client_id=770336754352-r8dl0o1v5bpjl88de4g4lh1i4tlt1hgh.apps.googleusercontent.com&response_type=permission&scope=https://www.googleapis.com/auth/youtube',
-        ),
-        headers: {
-          'Authorization': 'Bearer $accessToken',
-          'User-Agent':
-              'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15',
-        },
-      );
-      _parseCookies(r1.headers['set-cookie'], cookieMap);
+    if (accessToken == null) return false;
 
-      // then hit youtube.com with those cookies
-      final r2 = await http.get(
-        Uri.parse('https://www.youtube.com/'),
-        headers: {
-          'Authorization': 'Bearer $accessToken',
-          'Cookie': cookieMap.entries
-              .map((e) => '${e.key}=${e.value}')
-              .join('; '),
-          'User-Agent':
-              'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15',
-        },
-      );
-      _parseCookies(r2.headers['set-cookie'], cookieMap);
+    // Pre-set the OAuth token as a cookie so the WebView is authenticated
+    final cookieManager = CookieManager.instance();
+    await cookieManager.setCookie(
+      url: WebUri(_ytMusicUrl),
+      name: 'GOOGLE_ABUSE_EXEMPTION',
+      value: '', // not always needed
+    );
 
-      // finally hit music.youtube.com
-      final r3 = await http.get(
-        Uri.parse('https://music.youtube.com/'),
-        headers: {
-          'Authorization': 'Bearer $accessToken',
-          'Cookie': cookieMap.entries
-              .map((e) => '${e.key}=${e.value}')
-              .join('; '),
-          'User-Agent':
-              'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15',
-        },
-      );
-      _parseCookies(r3.headers['set-cookie'], cookieMap);
-
-      if (cookieMap.isEmpty) return null;
-
-      final cookieString = cookieMap.entries
-          .map((e) => '${e.key}=${e.value}')
-          .join('; ');
-
-      UserSession().ytMusicCookies = cookieString;
-      return cookieString;
-    } catch (e) {
-      return null;
-    }
+    // Load YT Music silently via headless WebView (done in a separate widget)
+    // See step 3 — once loaded, call this:
+    return await _fetchCookiesFromWebView();
   }
 
-  static void _parseCookies(String? raw, Map<String, String> map) {
-    if (raw == null) return;
-    for (final cookie in raw.split(',')) {
-      final parts = cookie.trim().split(';')[0].split('=');
-      if (parts.length >= 2) {
-        map[parts[0].trim()] = parts.sublist(1).join('=').trim();
-      }
+  Future<bool> _fetchCookiesFromWebView() async {
+    final cookieManager = CookieManager.instance();
+    final cookies = await cookieManager.getCookies(url: WebUri(_ytMusicUrl));
+
+    for (final cookie in cookies) {
+      _cookies[cookie.name] = cookie.value;
     }
+
+    _sapisid = _cookies['SAPISID'] ?? _cookies['__Secure-3PAPISID'];
+    return _sapisid != null;
   }
+
+  // Generates the required Authorization header for YT Music
+  String buildSapisidHash() {
+    final timestamp = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final input = '$timestamp $_sapisid $_ytMusicUrl';
+    final hash = sha1.convert(utf8.encode(input)).toString();
+    return 'SAPISIDHASH ${timestamp}_$hash';
+  }
+
+  String buildCookieHeader() {
+    return _cookies.entries.map((e) => '${e.key}=${e.value}').join('; ');
+  }
+
+  bool get isAuthenticated => _sapisid != null;
 }
