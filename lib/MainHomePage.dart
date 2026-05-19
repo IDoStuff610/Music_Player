@@ -5,6 +5,8 @@ import 'package:music_player/LoginPage.dart';
 import 'package:music_player/user_session.dart';
 import 'package:music_player/services/ytmusic_api_service.dart';
 import 'package:music_player/services/ytmusic_auth_service.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 
 class _ThumbnailDebugPage extends StatefulWidget {
   const _ThumbnailDebugPage();
@@ -33,28 +35,71 @@ class _ThumbnailDebugPageState extends State<_ThumbnailDebugPage> {
       return;
     }
 
-    final auth = YTMusicAuthService.fromCookieString(cookies);
-    final api = YTMusicApiService(auth);
-
     try {
-      final sections = await api.getHomeSections();
-      final logs = <String>[];
+      final response = await http.post(
+        Uri.parse(
+          'https://music.youtube.com/youtubei/v1/browse?key=AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30',
+        ),
+        headers: {
+          'Content-Type': 'application/json',
+          'Cookie': cookies,
+          'Referer': 'https://music.youtube.com/',
+          'User-Agent':
+              'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15',
+        },
+        body: jsonEncode({
+          "browseId": "FEmusic_home",
+          "context": {
+            "client": {
+              "clientName": "WEB_REMIX",
+              "clientVersion": "1.20240101.00.00",
+              "hl": "en",
+              "gl": "US",
+            },
+          },
+        }),
+      );
 
-      for (final section in sections) {
-        logs.add('📂 ${section.title} (${section.items.length} items)');
-        for (final item in section.items) {
-          logs.add('  🎵 ${item.title}');
-          logs.add('  🔗 ${item.thumbnailUrl ?? "NULL URL"}');
-        }
+      final data = jsonDecode(response.body);
+
+      // Drill into first shelf, first item
+      final contents =
+          data['contents']?['singleColumnBrowseResultsRenderer']?['tabs']?[0]?['tabRenderer']?['content']?['sectionListRenderer']?['contents']
+              as List?;
+
+      if (contents == null || contents.isEmpty) {
+        setState(() {
+          _logs.add('❌ No contents found in response');
+          _loading = false;
+        });
+        return;
+      }
+
+      final firstShelf =
+          contents.first['musicCarouselShelfRenderer'] ??
+          contents.first['musicImmersiveCarouselShelfRenderer'];
+
+      final firstItem = (firstShelf?['contents'] as List?)?.first;
+
+      // Dump the raw JSON of the first item so we can see the thumbnail path
+      final raw = const JsonEncoder.withIndent('  ').convert(firstItem);
+
+      // Split into chunks of 200 chars so it fits on screen
+      final chunks = <String>[];
+      for (var i = 0; i < raw.length; i += 200) {
+        chunks.add(
+          raw.substring(i, i + 200 > raw.length ? raw.length : i + 200),
+        );
       }
 
       setState(() {
-        _logs.addAll(logs);
+        _logs.add('✅ Raw first item JSON:');
+        _logs.addAll(chunks);
         _loading = false;
       });
     } catch (e) {
       setState(() {
-        _logs.add('❌ API Error: $e');
+        _logs.add('❌ Error: $e');
         _loading = false;
       });
     }
