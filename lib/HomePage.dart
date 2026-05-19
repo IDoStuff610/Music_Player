@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:dart_ytmusic_api/dart_ytmusic_api.dart';
-//import 'package:music_player/services/ytmusic_auth_service.dart';
+import 'package:music_player/services/ytmusic_api_service.dart';
+import 'package:music_player/services/ytmusic_auth_service.dart';
 import 'package:music_player/user_session.dart';
-//import 'package:music_player/services/ytmusic_webview_page.dart';
 
 class Homepage extends StatefulWidget {
   const Homepage({super.key});
@@ -12,8 +11,7 @@ class Homepage extends StatefulWidget {
 }
 
 class _HomepageState extends State<Homepage> {
-  final YTMusic _ytmusic = YTMusic();
-  List<dynamic> _sections = [];
+  List<MusicSection> _sections = [];
   bool _isLoading = true;
   String? _error;
 
@@ -24,17 +22,36 @@ class _HomepageState extends State<Homepage> {
   }
 
   Future<void> _loadHome() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
     try {
-      // Cookies should already be set by LoginPage
       final String? cookies = UserSession().ytMusicCookies;
 
-      if (cookies != null) {
-        await _ytmusic.initialize(cookies: cookies);
-      } else {
-        await _ytmusic.initialize(); // fallback: no auth
+      if (cookies == null) {
+        setState(() {
+          _error = 'No cookies found. Please log out and log back in.';
+          _isLoading = false;
+        });
+        return;
       }
 
-      final sections = await _ytmusic.getHomeSections();
+      // Build the auth service from the stored cookie string
+      final auth = YTMusicAuthService.fromCookieString(cookies);
+
+      if (!auth.isAuthenticated) {
+        setState(() {
+          _error = 'SAPISID not found in cookies. Try logging out and back in.';
+          _isLoading = false;
+        });
+        return;
+      }
+
+      final api = YTMusicApiService(auth);
+      final sections = await api.getHomeSections();
+
       setState(() {
         _sections = sections;
         _isLoading = false;
@@ -47,102 +64,95 @@ class _HomepageState extends State<Homepage> {
     }
   }
 
-  // Change the build method - remove the outer Scaffold, just return the body directly
   @override
   Widget build(BuildContext context) {
-    return _isLoading
-        ? const Center(child: CircularProgressIndicator(color: Colors.white))
-        : _error != null
-        ? Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.error_outline, color: Colors.red, size: 48),
-                const SizedBox(height: 12),
-                Text(
-                  _error!, // 👈 show actual error
-                  style: const TextStyle(color: Colors.red, fontSize: 12),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 8),
-                TextButton(
-                  onPressed: () {
-                    setState(() {
-                      _isLoading = true;
-                      _error = null;
-                    });
-                    _loadHome();
-                  },
-                  child: const Text(
-                    'Retry',
-                    style: TextStyle(color: Colors.blueAccent),
-                  ),
-                ),
-              ],
+    if (_isLoading) {
+      return const Center(
+        child: CircularProgressIndicator(color: Colors.white),
+      );
+    }
+
+    if (_error != null) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline, color: Colors.red, size: 48),
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Text(
+                _error!,
+                style: const TextStyle(color: Colors.red, fontSize: 12),
+                textAlign: TextAlign.center,
+              ),
             ),
-          )
-        : RefreshIndicator(
-            onRefresh: () async {
-              setState(() => _isLoading = true);
-              await _loadHome();
-            },
-            child: ListView.builder(
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              itemCount: _sections.length,
-              itemBuilder: (context, index) => _buildSection(_sections[index]),
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: _loadHome,
+              child: const Text(
+                'Retry',
+                style: TextStyle(color: Colors.blueAccent),
+              ),
             ),
-          );
+          ],
+        ),
+      );
+    }
+
+    if (_sections.isEmpty) {
+      return const Center(
+        child: Text('No sections found.', style: TextStyle(color: Colors.grey)),
+      );
+    }
+
+    return RefreshIndicator(
+      onRefresh: _loadHome,
+      child: ListView.builder(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        itemCount: _sections.length,
+        itemBuilder: (context, index) => _buildSection(_sections[index]),
+      ),
+    );
   }
 
-  Widget _buildSection(dynamic section) {
-    final String title = section.title ?? '';
-    final List<dynamic> contents = section.contents ?? [];
+  Widget _buildSection(MusicSection section) {
+    if (section.items.isEmpty) return const SizedBox.shrink();
 
-    if (contents.isEmpty) return const SizedBox.shrink();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (title.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: Text(
-              title,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          child: Text(
+            section.title,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
             ),
           ),
+        ),
         SizedBox(
           height: 200,
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 12),
-            itemCount: contents.length,
-            itemBuilder: (context, index) {
-              return _buildSongCard(contents[index]);
-            },
+            itemCount: section.items.length,
+            itemBuilder: (context, index) =>
+                _buildSongCard(section.items[index]),
           ),
         ),
       ],
     );
   }
 
-  Widget _buildSongCard(dynamic item) {
-    final String title = item.name ?? item.title ?? 'Unknown';
-    final String subtitle =
-        item.artist?.name ??
-        (item.artists != null && item.artists.isNotEmpty
-            ? item.artists[0].name
-            : '');
-    final String? thumbnailUrl =
-        item.thumbnails != null && item.thumbnails.isNotEmpty
-        ? item.thumbnails.last.url
-        : null;
-
+  Widget _buildSongCard(MusicItem item) {
     return GestureDetector(
-      onTap: () {},
+      onTap: () {
+        // playback coming next!
+        debugPrint('Tapped: ${item.title} — videoId: ${item.videoId}');
+      },
       child: Container(
         width: 140,
         margin: const EdgeInsets.symmetric(horizontal: 6),
@@ -150,10 +160,10 @@ class _HomepageState extends State<Homepage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             ClipRRect(
-              borderRadius: BorderRadiusGeometry.circular(8),
-              child: thumbnailUrl != null
+              borderRadius: BorderRadius.circular(8),
+              child: item.thumbnailUrl != null
                   ? Image.network(
-                      thumbnailUrl,
+                      item.thumbnailUrl!,
                       width: 140,
                       height: 140,
                       fit: BoxFit.cover,
@@ -163,14 +173,14 @@ class _HomepageState extends State<Homepage> {
             ),
             const SizedBox(height: 6),
             Text(
-              title,
+              item.title,
               style: const TextStyle(color: Colors.white, fontSize: 13),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
-            if (subtitle.isNotEmpty)
+            if (item.subtitle != null && item.subtitle!.isNotEmpty)
               Text(
-                subtitle,
+                item.subtitle!,
                 style: const TextStyle(color: Colors.grey, fontSize: 11),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,

@@ -9,6 +9,8 @@ class YTMusicAuthService {
   Map<String, String> _cookies = {};
   String? _sapisid;
 
+  YTMusicAuthService();
+
   // Call this after your existing Google Sign In
   Future<bool> extractCookiesViaWebView(GoogleSignInAccount googleUser) async {
     final googleAuth = await googleUser.authentication;
@@ -27,6 +29,27 @@ class YTMusicAuthService {
     // Load YT Music silently via headless WebView (done in a separate widget)
     // See step 3 — once loaded, call this:
     return await _fetchCookiesFromWebView();
+  }
+
+  // Add this factory constructor to YTMusicAuthService:
+  factory YTMusicAuthService.fromCookieString(String cookieString) {
+    final service = YTMusicAuthService();
+
+    // Parse "key=value; key=value" into a map
+    final pairs = cookieString.split('; ');
+    for (final pair in pairs) {
+      final eqIndex = pair.indexOf('=');
+      if (eqIndex == -1) continue;
+      final key = pair.substring(0, eqIndex).trim();
+      final value = pair.substring(eqIndex + 1).trim();
+      service._cookies[key] = value;
+    }
+
+    // Prefer __Secure-3PAPISID over SAPISID (more reliable for YT Music)
+    service._sapisid =
+        service._cookies['__Secure-3PAPISID'] ?? service._cookies['SAPISID'];
+
+    return service;
   }
 
   Future<bool> _fetchCookiesFromWebView() async {
