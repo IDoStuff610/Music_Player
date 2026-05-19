@@ -167,7 +167,28 @@ class _HomepageState extends State<Homepage> {
                       width: 140,
                       height: 140,
                       fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => _placeholderThumbnail(),
+                      headers: {
+                        'Cookie': UserSession().ytMusicCookies ?? '',
+                        'Referer': 'https://music.youtube.com/',
+                      },
+                      errorBuilder: (context, error, stackTrace) {
+                        debugPrint('Thumbnail error for ${item.title}: $error');
+                        return _placeholderThumbnail();
+                      },
+                      loadingBuilder: (context, child, loadingProgress) {
+                        if (loadingProgress == null) return child;
+                        return Container(
+                          width: 140,
+                          height: 140,
+                          color: Colors.grey.shade800,
+                          child: const Center(
+                            child: CircularProgressIndicator(
+                              color: Colors.white54,
+                              strokeWidth: 2,
+                            ),
+                          ),
+                        );
+                      },
                     )
                   : _placeholderThumbnail(),
             ),
