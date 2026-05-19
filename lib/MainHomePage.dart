@@ -3,6 +3,112 @@ import 'package:flutter/services.dart';
 import 'package:music_player/HomePage.dart';
 import 'package:music_player/LoginPage.dart';
 import 'package:music_player/user_session.dart';
+import 'package:music_player/services/ytmusic_api_service.dart';
+import 'package:music_player/services/ytmusic_auth_service.dart';
+
+class _ThumbnailDebugPage extends StatefulWidget {
+  const _ThumbnailDebugPage();
+
+  @override
+  State<_ThumbnailDebugPage> createState() => _ThumbnailDebugPageState();
+}
+
+class _ThumbnailDebugPageState extends State<_ThumbnailDebugPage> {
+  final List<String> _logs = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _test();
+  }
+
+  Future<void> _test() async {
+    final cookies = UserSession().ytMusicCookies;
+    if (cookies == null) {
+      setState(() {
+        _logs.add('❌ No cookies in session');
+        _loading = false;
+      });
+      return;
+    }
+
+    final auth = YTMusicAuthService.fromCookieString(cookies);
+    final api = YTMusicApiService(auth);
+
+    try {
+      final sections = await api.getHomeSections();
+      final logs = <String>[];
+
+      for (final section in sections) {
+        logs.add('📂 ${section.title} (${section.items.length} items)');
+        for (final item in section.items) {
+          logs.add('  🎵 ${item.title}');
+          logs.add('  🔗 ${item.thumbnailUrl ?? "NULL URL"}');
+        }
+      }
+
+      setState(() {
+        _logs.addAll(logs);
+        _loading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _logs.add('❌ API Error: $e');
+        _loading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        title: const Text(
+          'Thumbnail Debug',
+          style: TextStyle(color: Colors.white),
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.copy, color: Colors.white),
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: _logs.join('\n')));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Copied to clipboard!')),
+              );
+            },
+          ),
+        ],
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator(color: Colors.white))
+          : ListView.builder(
+              padding: const EdgeInsets.all(12),
+              itemCount: _logs.length,
+              itemBuilder: (context, index) {
+                final line = _logs[index];
+                Color color = Colors.grey;
+                if (line.startsWith('📂')) color = Colors.amber;
+                if (line.startsWith('  🔗')) color = Colors.lightBlueAccent;
+                if (line.startsWith('❌')) color = Colors.redAccent;
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    line,
+                    style: TextStyle(
+                      color: color,
+                      fontSize: 11,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                );
+              },
+            ),
+    );
+  }
+}
 
 class Mainhomepage extends StatefulWidget {
   const Mainhomepage({super.key});
@@ -181,6 +287,17 @@ class _MainhomepageState extends State<Mainhomepage> {
         ),
       ),
       actions: [
+        // Add this to your actions list in _appbar()
+        IconButton(
+          onPressed: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const _ThumbnailDebugPage(),
+            ),
+          ),
+          icon: const Icon(Icons.image_search, color: Colors.white),
+        ),
+
         // 🍪 Debug toggle button
         IconButton(
           onPressed: () => setState(() => _showDebug = !_showDebug),
