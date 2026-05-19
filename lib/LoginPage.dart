@@ -75,6 +75,8 @@ class _LoginpageState extends State<Loginpage> {
       UserSession().ytMusicCookies = cookies;
     }
 
+    UserSession().user ??= await _googleSignIn?.signInSilently();
+
     if (mounted) _goToHome();
   }
 

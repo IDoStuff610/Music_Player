@@ -18,7 +18,7 @@ class _MainhomepageState extends State<Mainhomepage> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!UserSession().isLoggedIn) {
+      if (!UserSession().isLoggedIn && UserSession().ytMusicCookies == null) {
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (context) => const Loginpage()),
