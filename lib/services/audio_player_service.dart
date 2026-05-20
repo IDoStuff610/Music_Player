@@ -59,17 +59,9 @@ class AudioPlayerService extends ChangeNotifier {
         return;
       }
 
-      final auth = _getAuth();
       await _player.setAudioSource(
         AudioSource.uri(
           Uri.parse(streamUrl),
-          headers: auth != null
-              ? {
-                  'Cookie': auth.buildCookieHeader(),
-                  'Referer': 'https://music.youtube.com/',
-                  'Origin': 'https://music.youtube.com',
-                }
-              : {},
           tag: MediaItem(
             id: videoId,
             title: item.title,
@@ -99,99 +91,127 @@ class AudioPlayerService extends ChangeNotifier {
       return null;
     }
 
-    // No API key in URL — use Authorization header only
-    final uri = Uri.parse('https://music.youtube.com/youtubei/v1/player');
+    // Try multiple clients in order until one returns a plain URL
+    final clients = [_buildTvEmbeddedBody(videoId), _buildIosBody(videoId)];
 
-    final headers = <String, String>{
-      'Content-Type': 'application/json',
-      'Cookie': auth.buildCookieHeader(),
-      'Authorization': auth.buildSapisidHash(),
-      'X-Origin': 'https://music.youtube.com',
-      'Referer': 'https://music.youtube.com/',
-      'Origin': 'https://music.youtube.com',
-      'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-          'AppleWebKit/537.36 (KHTML, like Gecko) '
-          'Chrome/120.0.0.0 Safari/537.36',
-      'X-Youtube-Client-Name': '67', // 67 = WEB_REMIX
-      'X-Youtube-Client-Version': '1.20240101.00.00',
-    };
+    final clientNames = ['TVHTML5_SIMPLY_EMBEDDED_PLAYER', 'IOS'];
 
-    final body = jsonEncode({
+    for (int i = 0; i < clients.length; i++) {
+      debugPrint('Trying client: ${clientNames[i]}');
+
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+        'Cookie': auth.buildCookieHeader(),
+        'Authorization': auth.buildSapisidHash(),
+        'X-Origin': 'https://music.youtube.com',
+        'Referer': 'https://music.youtube.com/',
+        'Origin': 'https://music.youtube.com',
+      };
+
+      final response = await http.post(
+        Uri.parse('https://music.youtube.com/youtubei/v1/player'),
+        headers: headers,
+        body: clients[i],
+      );
+
+      if (response.statusCode != 200) {
+        debugInfo = '${clientNames[i]}: HTTP ${response.statusCode}';
+        continue;
+      }
+
+      final json = jsonDecode(response.body) as Map<String, dynamic>;
+      final playabilityStatus = json['playabilityStatus']?['status'];
+
+      if (playabilityStatus != 'OK') {
+        debugInfo =
+            '${clientNames[i]}: status=$playabilityStatus\n'
+            'reason=${json['playabilityStatus']?['reason']}';
+        continue;
+      }
+
+      final adaptiveFormats =
+          (json['streamingData']?['adaptiveFormats'] as List? ?? []);
+      final regularFormats = (json['streamingData']?['formats'] as List? ?? []);
+      final allFormats = [...adaptiveFormats, ...regularFormats];
+
+      // Check which formats have plain URLs vs cipher
+      final withUrl = allFormats.where((f) => f['url'] != null).toList();
+      final withCipher = allFormats
+          .where((f) => f['signatureCipher'] != null || f['cipher'] != null)
+          .toList();
+
+      debugPrint(
+        '${clientNames[i]}: ${allFormats.length} formats, '
+        '${withUrl.length} with url, ${withCipher.length} with cipher',
+      );
+
+      final audioWithUrl = withUrl
+          .where(
+            (f) => (f['mimeType'] as String?)?.startsWith('audio/') == true,
+          )
+          .toList();
+
+      if (audioWithUrl.isNotEmpty) {
+        audioWithUrl.sort(
+          (a, b) => ((b['averageBitrate'] ?? b['bitrate'] ?? 0) as int)
+              .compareTo((a['averageBitrate'] ?? a['bitrate'] ?? 0) as int),
+        );
+        debugInfo =
+            '✅ ${clientNames[i]}: ${audioWithUrl.length} audio formats found';
+        notifyListeners();
+        return audioWithUrl.first['url'] as String;
+      }
+
+      // If we have cipher formats, report it clearly
+      if (withCipher.isNotEmpty) {
+        debugInfo =
+            '${clientNames[i]}: ${withCipher.length} cipher-only formats '
+            '(no plain URL) — trying next client...';
+      } else {
+        debugInfo = '${clientNames[i]}: 0 audio formats at all';
+      }
+    }
+
+    // All clients failed
+    notifyListeners();
+    return null;
+  }
+
+  // TVHTML5_SIMPLY_EMBEDDED_PLAYER — known to skip cipher on many videos
+  String _buildTvEmbeddedBody(String videoId) {
+    return jsonEncode({
       'videoId': videoId,
       'context': {
         'client': {
-          'clientName': 'WEB_REMIX',
-          'clientVersion': '1.20240101.00.00',
+          'clientName': 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
+          'clientVersion': '2.0',
           'hl': 'en',
           'gl': 'US',
-          'userAgent':
-              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-              'AppleWebKit/537.36 (KHTML, like Gecko) '
-              'Chrome/120.0.0.0 Safari/537.36,gzip(gfe)',
+          'utcOffsetMinutes': 0,
+        },
+        'thirdParty': {'embedUrl': 'https://music.youtube.com'},
+      },
+    });
+  }
+
+  // IOS client — also tends to return plain URLs
+  String _buildIosBody(String videoId) {
+    return jsonEncode({
+      'videoId': videoId,
+      'context': {
+        'client': {
+          'clientName': 'IOS',
+          'clientVersion': '19.09.3',
+          'deviceMake': 'Apple',
+          'deviceModel': 'iPhone16,2',
+          'osName': 'iPhone',
+          'osVersion': '17.4.0.21E219',
+          'hl': 'en',
+          'gl': 'US',
           'utcOffsetMinutes': 0,
         },
       },
     });
-
-    final response = await http.post(uri, headers: headers, body: body);
-
-    final bodyPreview = response.body.length > 1000
-        ? response.body.substring(0, 1000)
-        : response.body;
-
-    if (response.statusCode != 200) {
-      debugInfo = 'HTTP ${response.statusCode}\n$bodyPreview';
-      notifyListeners();
-      return null;
-    }
-
-    final json = jsonDecode(response.body) as Map<String, dynamic>;
-    final playabilityStatus = json['playabilityStatus']?['status'];
-    final reason = json['playabilityStatus']?['reason'] ?? '';
-
-    if (playabilityStatus != 'OK') {
-      debugInfo =
-          'playabilityStatus: $playabilityStatus\n'
-          'reason: $reason\n\n'
-          '$bodyPreview';
-      notifyListeners();
-      return null;
-    }
-
-    final adaptiveFormats =
-        (json['streamingData']?['adaptiveFormats'] as List? ?? []);
-    final regularFormats = (json['streamingData']?['formats'] as List? ?? []);
-    final allFormats = [...adaptiveFormats, ...regularFormats];
-
-    final audioFormats = allFormats
-        .where(
-          (f) =>
-              (f['mimeType'] as String?)?.startsWith('audio/') == true &&
-              f['url'] != null,
-        )
-        .toList();
-
-    if (audioFormats.isEmpty) {
-      final mimeTypes = allFormats.map((f) => f['mimeType']).toList();
-      final hasUrl = allFormats.map((f) => f['url'] != null).toList();
-      debugInfo =
-          'No audio+url formats\n'
-          'adaptive: ${adaptiveFormats.length}, regular: ${regularFormats.length}\n'
-          'mimeTypes: $mimeTypes\n'
-          'hasUrl: $hasUrl';
-      notifyListeners();
-      return null;
-    }
-
-    audioFormats.sort(
-      (a, b) => ((b['averageBitrate'] ?? b['bitrate'] ?? 0) as int).compareTo(
-        (a['averageBitrate'] ?? a['bitrate'] ?? 0) as int,
-      ),
-    );
-
-    debugInfo = 'OK - found ${audioFormats.length} audio formats';
-    return audioFormats.first['url'] as String;
   }
 
   Future<String?> _resolveVideoIdFromPlaylist(String playlistId) async {
@@ -206,12 +226,6 @@ class AudioPlayerService extends ChangeNotifier {
         'Authorization': auth.buildSapisidHash(),
         'X-Origin': 'https://music.youtube.com',
         'Referer': 'https://music.youtube.com/',
-        'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-            'AppleWebKit/537.36 (KHTML, like Gecko) '
-            'Chrome/120.0.0.0 Safari/537.36',
-        'X-Youtube-Client-Name': '67',
-        'X-Youtube-Client-Version': '1.20240101.00.00',
       },
       body: jsonEncode({
         'playlistId': playlistId,
