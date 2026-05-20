@@ -52,15 +52,20 @@ class AudioPlayerService extends ChangeNotifier {
         return;
       }
 
+      // Get stream info
       final manifest = await _yt.videos.streamsClient.getManifest(
         videoIdToPlay,
       );
       final audioStream = manifest.audioOnly.withHighestBitrate();
-      final streamUrl = audioStream.url.toString();
 
+      // Use LockCachingAudioSource to handle the stream properly on iOS
       await _player.setAudioSource(
-        AudioSource.uri(
-          Uri.parse(streamUrl),
+        LockCachingAudioSource(
+          audioStream.url,
+          headers: {
+            'User-Agent':
+                'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15',
+          },
           tag: MediaItem(
             id: videoIdToPlay,
             title: item.title,
@@ -74,7 +79,7 @@ class AudioPlayerService extends ChangeNotifier {
 
       await _player.play();
     } catch (e) {
-      error = e.toString(); // keep currentItem so player stays open
+      error = e.toString();
       isLoading = false;
       notifyListeners();
     } finally {
