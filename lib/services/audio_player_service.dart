@@ -93,47 +93,51 @@ class AudioPlayerService extends ChangeNotifier {
   Future<String?> _fetchStreamUrl(String videoId) async {
     final auth = _getAuth();
 
-    // Use a plain Android client — simplest body, least likely to get 400
-    final headers = <String, String>{
-      'Content-Type': 'application/json',
-      'User-Agent': 'Mozilla/5.0',
-      'X-Goog-Api-Format-Version': '1',
-    };
-
-    if (auth != null) {
-      headers['Cookie'] = auth.buildCookieHeader();
-      headers['Authorization'] = auth.buildSapisidHash();
-      headers['X-Origin'] = 'https://music.youtube.com';
-      headers['Referer'] = 'https://music.youtube.com/';
+    if (auth == null) {
+      debugInfo = 'auth is null — no cookies found';
+      notifyListeners();
+      return null;
     }
 
-    // Minimal body — remove anything non-essential that could cause 400
+    // No API key in URL — use Authorization header only
+    final uri = Uri.parse('https://music.youtube.com/youtubei/v1/player');
+
+    final headers = <String, String>{
+      'Content-Type': 'application/json',
+      'Cookie': auth.buildCookieHeader(),
+      'Authorization': auth.buildSapisidHash(),
+      'X-Origin': 'https://music.youtube.com',
+      'Referer': 'https://music.youtube.com/',
+      'Origin': 'https://music.youtube.com',
+      'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+          'AppleWebKit/537.36 (KHTML, like Gecko) '
+          'Chrome/120.0.0.0 Safari/537.36',
+      'X-Youtube-Client-Name': '67', // 67 = WEB_REMIX
+      'X-Youtube-Client-Version': '1.20240101.00.00',
+    };
+
     final body = jsonEncode({
       'videoId': videoId,
       'context': {
         'client': {
-          'clientName': 'ANDROID_MUSIC',
-          'clientVersion': '5.28.1',
-          'androidSdkVersion': 30,
+          'clientName': 'WEB_REMIX',
+          'clientVersion': '1.20240101.00.00',
           'hl': 'en',
           'gl': 'US',
+          'userAgent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+              'AppleWebKit/537.36 (KHTML, like Gecko) '
+              'Chrome/120.0.0.0 Safari/537.36,gzip(gfe)',
           'utcOffsetMinutes': 0,
         },
       },
     });
 
-    final response = await http.post(
-      Uri.parse(
-        'https://music.youtube.com/youtubei/v1/player'
-        '?key=AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30',
-      ),
-      headers: headers,
-      body: body,
-    );
+    final response = await http.post(uri, headers: headers, body: body);
 
-    // Show full response body for debugging (scrollable on screen)
-    final bodyPreview = response.body.length > 800
-        ? response.body.substring(0, 800)
+    final bodyPreview = response.body.length > 1000
+        ? response.body.substring(0, 1000)
         : response.body;
 
     if (response.statusCode != 200) {
@@ -148,7 +152,9 @@ class AudioPlayerService extends ChangeNotifier {
 
     if (playabilityStatus != 'OK') {
       debugInfo =
-          'playabilityStatus: $playabilityStatus\nreason: $reason\n\n$bodyPreview';
+          'playabilityStatus: $playabilityStatus\n'
+          'reason: $reason\n\n'
+          '$bodyPreview';
       notifyListeners();
       return null;
     }
@@ -193,24 +199,26 @@ class AudioPlayerService extends ChangeNotifier {
     if (auth == null) return null;
 
     final response = await http.post(
-      Uri.parse(
-        'https://music.youtube.com/youtubei/v1/next'
-        '?key=AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30',
-      ),
+      Uri.parse('https://music.youtube.com/youtubei/v1/next'),
       headers: {
         'Content-Type': 'application/json',
         'Cookie': auth.buildCookieHeader(),
         'Authorization': auth.buildSapisidHash(),
         'X-Origin': 'https://music.youtube.com',
         'Referer': 'https://music.youtube.com/',
-        'User-Agent': 'Mozilla/5.0',
+        'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+            'AppleWebKit/537.36 (KHTML, like Gecko) '
+            'Chrome/120.0.0.0 Safari/537.36',
+        'X-Youtube-Client-Name': '67',
+        'X-Youtube-Client-Version': '1.20240101.00.00',
       },
       body: jsonEncode({
         'playlistId': playlistId,
         'context': {
           'client': {
-            'clientName': 'ANDROID_MUSIC',
-            'clientVersion': '5.28.1',
+            'clientName': 'WEB_REMIX',
+            'clientVersion': '1.20240101.00.00',
             'hl': 'en',
             'gl': 'US',
           },
