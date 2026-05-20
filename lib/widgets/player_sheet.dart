@@ -216,6 +216,7 @@ class _PlayerSheetState extends State<PlayerSheet>
               ),
             ),
 
+            // Already exists — your error display:
             if (_service.error != null)
               Padding(
                 padding: const EdgeInsets.symmetric(
@@ -229,6 +230,30 @@ class _PlayerSheetState extends State<PlayerSheet>
                 ),
               ),
 
+            // ADD THIS right after:
+            if (_service.debugInfo != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 4,
+                ),
+                child: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade900,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    _service.debugInfo!,
+                    style: const TextStyle(
+                      color: Colors.yellowAccent,
+                      fontSize: 10,
+                      fontFamily: 'monospace',
+                    ),
+                    textAlign: TextAlign.left,
+                  ),
+                ),
+              ),
             const SizedBox(height: 24),
 
             // Progress bar

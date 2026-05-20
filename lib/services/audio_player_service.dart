@@ -17,6 +17,7 @@ class AudioPlayerService extends ChangeNotifier {
   MusicItem? currentItem;
   bool isLoading = false;
   String? error;
+  String? debugInfo;
 
   Stream<PlayerState> get playerStateStream => _player.playerStateStream;
   Stream<Duration> get positionStream => _player.positionStream;
@@ -34,6 +35,7 @@ class AudioPlayerService extends ChangeNotifier {
 
     isLoading = true;
     error = null;
+    debugInfo = null;
     currentItem = item;
     notifyListeners();
 
@@ -82,7 +84,6 @@ class AudioPlayerService extends ChangeNotifier {
       await _player.play();
     } catch (e) {
       error = e.toString();
-      debugPrint('🔴 AudioPlayerService error: $e');
     } finally {
       isLoading = false;
       notifyListeners();
@@ -134,37 +135,57 @@ class AudioPlayerService extends ChangeNotifier {
       body: body,
     );
 
-    // ---- DUMP EVERYTHING ----
-    debugPrint('=== PLAYER API RESPONSE ===');
-    debugPrint('Status: ${response.statusCode}');
-    debugPrint('Body: ${response.body}'); // <-- paste this output to me
-    debugPrint('===========================');
-
-    if (response.statusCode != 200) return null;
+    if (response.statusCode != 200) {
+      debugInfo =
+          'HTTP ${response.statusCode}\n'
+          '${response.body.substring(0, response.body.length.clamp(0, 300))}';
+      notifyListeners();
+      return null;
+    }
 
     final json = jsonDecode(response.body) as Map<String, dynamic>;
     final playabilityStatus = json['playabilityStatus']?['status'];
-    final reason = json['playabilityStatus']?['reason'];
-    debugPrint('playabilityStatus: $playabilityStatus');
-    debugPrint('reason: $reason');
+    final reason = json['playabilityStatus']?['reason'] ?? '';
 
-    final streamingDataKeys = json['streamingData']?.keys?.toList();
-    debugPrint('streamingData keys: $streamingDataKeys');
+    if (playabilityStatus != 'OK') {
+      debugInfo = 'playabilityStatus: $playabilityStatus\nreason: $reason';
+      notifyListeners();
+      return null;
+    }
 
     final adaptiveFormats =
         (json['streamingData']?['adaptiveFormats'] as List? ?? []);
     final regularFormats = (json['streamingData']?['formats'] as List? ?? []);
-    debugPrint('adaptiveFormats count: ${adaptiveFormats.length}');
-    debugPrint('regularFormats count: ${regularFormats.length}');
+    final allFormats = [...adaptiveFormats, ...regularFormats];
 
-    if (adaptiveFormats.isNotEmpty) {
-      debugPrint('First adaptiveFormat: ${adaptiveFormats.first}');
-    }
-    if (regularFormats.isNotEmpty) {
-      debugPrint('First regularFormat: ${regularFormats.first}');
+    final audioFormats = allFormats
+        .where(
+          (f) =>
+              (f['mimeType'] as String?)?.startsWith('audio/') == true &&
+              f['url'] != null,
+        )
+        .toList();
+
+    if (audioFormats.isEmpty) {
+      final mimeTypes = allFormats.map((f) => f['mimeType']).toList();
+      final hasUrl = allFormats.map((f) => f['url'] != null).toList();
+      debugInfo =
+          'No audio+url formats\n'
+          'adaptive: ${adaptiveFormats.length}, regular: ${regularFormats.length}\n'
+          'mimeTypes: $mimeTypes\n'
+          'hasUrl: $hasUrl';
+      notifyListeners();
+      return null;
     }
 
-    return null; // forced null for now — just getting the logs
+    audioFormats.sort(
+      (a, b) => ((b['averageBitrate'] ?? b['bitrate'] ?? 0) as int).compareTo(
+        (a['averageBitrate'] ?? a['bitrate'] ?? 0) as int,
+      ),
+    );
+
+    debugInfo = 'OK - found ${audioFormats.length} audio formats';
+    return audioFormats.first['url'] as String;
   }
 
   Future<String?> _resolveVideoIdFromPlaylist(String playlistId) async {
