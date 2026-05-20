@@ -89,40 +89,39 @@ class AudioPlayerService extends ChangeNotifier {
     }
   }
 
-  /// Calls the YT Music internal /player endpoint to get a direct stream URL.
-  /// This is the same API YT Music web uses — no third-party library needed.
   Future<String?> _fetchStreamUrl(String videoId) async {
     final auth = _getAuth();
 
     final headers = <String, String>{
       'Content-Type': 'application/json',
-      'Referer': 'https://music.youtube.com/',
-      'Origin': 'https://music.youtube.com',
-      'X-Origin': 'https://music.youtube.com',
       'User-Agent':
-          'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) '
-          'AppleWebKit/605.1.15',
+          'com.google.ios.youtubemusic/6.21 (iPhone; CPU iPhone OS 16_7 like Mac OS X)',
+      'X-Goog-Api-Format-Version': '1',
     };
 
     if (auth != null) {
       headers['Cookie'] = auth.buildCookieHeader();
       headers['Authorization'] = auth.buildSapisidHash();
+      headers['X-Origin'] = 'https://music.youtube.com';
+      headers['Referer'] = 'https://music.youtube.com/';
     }
 
     final body = jsonEncode({
       'videoId': videoId,
       'context': {
         'client': {
-          'clientName': 'WEB_REMIX',
-          'clientVersion': '1.20240101.00.00',
+          'clientName': 'IOS_MUSIC',
+          'clientVersion': '6.21',
+          'deviceMake': 'Apple',
+          'deviceModel': 'iPhone16,2',
+          'osName': 'iPhone',
+          'osVersion': '16.7.0.20H115',
           'hl': 'en',
           'gl': 'US',
         },
       },
       'playbackContext': {
-        'contentPlaybackContext': {
-          'signatureTimestamp': 19950, // safe static value for web client
-        },
+        'contentPlaybackContext': {'signatureTimestamp': 19950},
       },
     });
 
@@ -143,28 +142,44 @@ class AudioPlayerService extends ChangeNotifier {
 
     final json = jsonDecode(response.body) as Map<String, dynamic>;
 
-    // Pick the best audio-only format
-    final formats = (json['streamingData']?['adaptiveFormats'] as List?)
-        ?.where(
+    final playabilityStatus = json['playabilityStatus']?['status'];
+    debugPrint('▶️ playabilityStatus: $playabilityStatus');
+    if (playabilityStatus != 'OK') {
+      debugPrint('🔴 Not playable: ${json['playabilityStatus']?['reason']}');
+      return null;
+    }
+
+    final adaptiveFormats =
+        (json['streamingData']?['adaptiveFormats'] as List? ?? []);
+    final regularFormats = (json['streamingData']?['formats'] as List? ?? []);
+
+    final allFormats = [...adaptiveFormats, ...regularFormats];
+
+    final audioFormats = allFormats
+        .where(
           (f) =>
               (f['mimeType'] as String?)?.startsWith('audio/') == true &&
               f['url'] != null,
         )
         .toList();
 
-    if (formats == null || formats.isEmpty) {
-      debugPrint('🔴 No audio formats found in player response');
+    if (audioFormats.isEmpty) {
+      debugPrint(
+        '🔴 No audio formats. streamingData keys: ${json['streamingData']?.keys}',
+      );
+      if (allFormats.isNotEmpty) {
+        debugPrint('🔴 First format sample: ${allFormats.first}');
+      }
       return null;
     }
 
-    // Sort by bitrate descending, pick highest
-    formats.sort(
-      (a, b) => ((b['averageBitrate'] ?? 0) as int).compareTo(
-        (a['averageBitrate'] ?? 0) as int,
+    audioFormats.sort(
+      (a, b) => ((b['averageBitrate'] ?? b['bitrate'] ?? 0) as int).compareTo(
+        (a['averageBitrate'] ?? a['bitrate'] ?? 0) as int,
       ),
     );
 
-    final url = formats.first['url'] as String;
+    final url = audioFormats.first['url'] as String;
     debugPrint('✅ Stream URL resolved for $videoId');
     return url;
   }
@@ -184,13 +199,15 @@ class AudioPlayerService extends ChangeNotifier {
         'Authorization': auth.buildSapisidHash(),
         'X-Origin': 'https://music.youtube.com',
         'Referer': 'https://music.youtube.com/',
+        'User-Agent':
+            'com.google.ios.youtubemusic/6.21 (iPhone; CPU iPhone OS 16_7 like Mac OS X)',
       },
       body: jsonEncode({
         'playlistId': playlistId,
         'context': {
           'client': {
-            'clientName': 'WEB_REMIX',
-            'clientVersion': '1.20240101.00.00',
+            'clientName': 'IOS_MUSIC',
+            'clientVersion': '6.21',
             'hl': 'en',
             'gl': 'US',
           },
@@ -202,7 +219,6 @@ class AudioPlayerService extends ChangeNotifier {
 
     try {
       final json = jsonDecode(response.body);
-      // First video in the playlist queue
       return json['currentVideoEndpoint']?['watchEndpoint']?['videoId'];
     } catch (_) {
       return null;
