@@ -93,10 +93,10 @@ class AudioPlayerService extends ChangeNotifier {
   Future<String?> _fetchStreamUrl(String videoId) async {
     final auth = _getAuth();
 
+    // Use a plain Android client — simplest body, least likely to get 400
     final headers = <String, String>{
       'Content-Type': 'application/json',
-      'User-Agent':
-          'com.google.ios.youtubemusic/6.21 (iPhone; CPU iPhone OS 16_7 like Mac OS X)',
+      'User-Agent': 'Mozilla/5.0',
       'X-Goog-Api-Format-Version': '1',
     };
 
@@ -107,22 +107,18 @@ class AudioPlayerService extends ChangeNotifier {
       headers['Referer'] = 'https://music.youtube.com/';
     }
 
+    // Minimal body — remove anything non-essential that could cause 400
     final body = jsonEncode({
       'videoId': videoId,
       'context': {
         'client': {
-          'clientName': 'IOS_MUSIC',
-          'clientVersion': '6.21',
-          'deviceMake': 'Apple',
-          'deviceModel': 'iPhone16,2',
-          'osName': 'iPhone',
-          'osVersion': '16.7.0.20H115',
+          'clientName': 'ANDROID_MUSIC',
+          'clientVersion': '5.28.1',
+          'androidSdkVersion': 30,
           'hl': 'en',
           'gl': 'US',
+          'utcOffsetMinutes': 0,
         },
-      },
-      'playbackContext': {
-        'contentPlaybackContext': {'signatureTimestamp': 19950},
       },
     });
 
@@ -135,10 +131,13 @@ class AudioPlayerService extends ChangeNotifier {
       body: body,
     );
 
+    // Show full response body for debugging (scrollable on screen)
+    final bodyPreview = response.body.length > 800
+        ? response.body.substring(0, 800)
+        : response.body;
+
     if (response.statusCode != 200) {
-      debugInfo =
-          'HTTP ${response.statusCode}\n'
-          '${response.body.substring(0, response.body.length.clamp(0, 300))}';
+      debugInfo = 'HTTP ${response.statusCode}\n$bodyPreview';
       notifyListeners();
       return null;
     }
@@ -148,7 +147,8 @@ class AudioPlayerService extends ChangeNotifier {
     final reason = json['playabilityStatus']?['reason'] ?? '';
 
     if (playabilityStatus != 'OK') {
-      debugInfo = 'playabilityStatus: $playabilityStatus\nreason: $reason';
+      debugInfo =
+          'playabilityStatus: $playabilityStatus\nreason: $reason\n\n$bodyPreview';
       notifyListeners();
       return null;
     }
@@ -203,15 +203,14 @@ class AudioPlayerService extends ChangeNotifier {
         'Authorization': auth.buildSapisidHash(),
         'X-Origin': 'https://music.youtube.com',
         'Referer': 'https://music.youtube.com/',
-        'User-Agent':
-            'com.google.ios.youtubemusic/6.21 (iPhone; CPU iPhone OS 16_7 like Mac OS X)',
+        'User-Agent': 'Mozilla/5.0',
       },
       body: jsonEncode({
         'playlistId': playlistId,
         'context': {
           'client': {
-            'clientName': 'IOS_MUSIC',
-            'clientVersion': '6.21',
+            'clientName': 'ANDROID_MUSIC',
+            'clientVersion': '5.28.1',
             'hl': 'en',
             'gl': 'US',
           },

@@ -238,19 +238,20 @@ class _PlayerSheetState extends State<PlayerSheet>
                   vertical: 4,
                 ),
                 child: Container(
+                  height: 180, // fixed height with scroll
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
                     color: Colors.grey.shade900,
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Text(
-                    _service.debugInfo!,
-                    style: const TextStyle(
-                      color: Colors.yellowAccent,
-                      fontSize: 10,
-                      fontFamily: 'monospace',
+                  child: SingleChildScrollView(
+                    child: Text(
+                      _service.debugInfo!,
+                      style: const TextStyle(
+                        color: Colors.yellowAccent,
+                        fontSize: 10,
+                      ),
                     ),
-                    textAlign: TextAlign.left,
                   ),
                 ),
               ),
