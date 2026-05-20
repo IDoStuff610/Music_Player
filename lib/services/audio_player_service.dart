@@ -1,11 +1,11 @@
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:just_audio/just_audio.dart';
 import 'package:just_audio_background/just_audio_background.dart';
-import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import 'package:music_player/services/ytmusic_api_service.dart';
-import 'package:music_player/user_session.dart';
 import 'package:music_player/services/ytmusic_auth_service.dart';
-import 'package:http/http.dart' as http;
+import 'package:music_player/user_session.dart';
 
 class AudioPlayerService extends ChangeNotifier {
   static final AudioPlayerService _instance = AudioPlayerService._internal();
@@ -18,14 +18,12 @@ class AudioPlayerService extends ChangeNotifier {
   bool isLoading = false;
   String? error;
 
-  AudioPlayer get player => _player;
-  bool get isPlaying => _player.playing;
-  Duration get position => _player.position;
-  Duration? get duration => _player.duration;
-
   Stream<PlayerState> get playerStateStream => _player.playerStateStream;
   Stream<Duration> get positionStream => _player.positionStream;
   Stream<Duration?> get durationStream => _player.durationStream;
+  bool get isPlaying => _player.playing;
+  Duration get position => _player.position;
+  Duration? get duration => _player.duration;
 
   Future<void> play(MusicItem item) async {
     if (item.videoId == null && item.playlistId == null) {
@@ -39,34 +37,39 @@ class AudioPlayerService extends ChangeNotifier {
     currentItem = item;
     notifyListeners();
 
-    // ✅ Fresh instance per play — avoids stale stream tokens
-    // ✅ Inject auth cookies so YouTube recognizes the same session
-    final yt = _buildAuthenticatedYT();
-
     try {
-      String? videoIdToPlay = item.videoId;
+      final videoId =
+          item.videoId ?? await _resolveVideoIdFromPlaylist(item.playlistId!);
 
-      if (videoIdToPlay == null && item.playlistId != null) {
-        final video = await yt.playlists.getVideos(item.playlistId!).first;
-        videoIdToPlay = video.id.value;
-      }
-
-      if (videoIdToPlay == null) {
-        error = 'Could not find a track to play';
+      if (videoId == null) {
+        error = 'Could not resolve a video ID';
         isLoading = false;
         notifyListeners();
         return;
       }
 
-      final manifest = await yt.videos.streamsClient.getManifest(videoIdToPlay);
-      final audioStream = manifest.audioOnly.withHighestBitrate();
+      final streamUrl = await _fetchStreamUrl(videoId);
 
-      // ✅ AudioSource.uri — LockCachingAudioSource breaks on iOS with expiring URLs
+      if (streamUrl == null) {
+        error = 'Could not get stream URL';
+        isLoading = false;
+        notifyListeners();
+        return;
+      }
+
+      final auth = _getAuth();
       await _player.setAudioSource(
         AudioSource.uri(
-          audioStream.url,
+          Uri.parse(streamUrl),
+          headers: auth != null
+              ? {
+                  'Cookie': auth.buildCookieHeader(),
+                  'Referer': 'https://music.youtube.com/',
+                  'Origin': 'https://music.youtube.com',
+                }
+              : {},
           tag: MediaItem(
-            id: videoIdToPlay,
+            id: videoId,
             title: item.title,
             artist: item.subtitle ?? '',
             artUri: item.thumbnailUrl != null
@@ -80,40 +83,136 @@ class AudioPlayerService extends ChangeNotifier {
     } catch (e) {
       error = e.toString();
       debugPrint('🔴 AudioPlayerService error: $e');
-      notifyListeners();
     } finally {
       isLoading = false;
-      yt.close(); // ✅ Always close the per-request instance
       notifyListeners();
     }
   }
 
-  /// Creates a YoutubeExplode instance with the user's auth cookies injected.
-  /// This ensures the stream fetch is seen as the same authenticated session
-  /// that fetched the video IDs from YT Music.
-  YoutubeExplode _buildAuthenticatedYT() {
-    final cookieString = UserSession().ytMusicCookies;
+  /// Calls the YT Music internal /player endpoint to get a direct stream URL.
+  /// This is the same API YT Music web uses — no third-party library needed.
+  Future<String?> _fetchStreamUrl(String videoId) async {
+    final auth = _getAuth();
 
-    if (cookieString == null) {
-      debugPrint('⚠️ No cookies — fetching stream unauthenticated');
-      return YoutubeExplode();
+    final headers = <String, String>{
+      'Content-Type': 'application/json',
+      'Referer': 'https://music.youtube.com/',
+      'Origin': 'https://music.youtube.com',
+      'X-Origin': 'https://music.youtube.com',
+      'User-Agent':
+          'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) '
+          'AppleWebKit/605.1.15',
+    };
+
+    if (auth != null) {
+      headers['Cookie'] = auth.buildCookieHeader();
+      headers['Authorization'] = auth.buildSapisidHash();
     }
 
-    final auth = YTMusicAuthService.fromCookieString(cookieString);
+    final body = jsonEncode({
+      'videoId': videoId,
+      'context': {
+        'client': {
+          'clientName': 'WEB_REMIX',
+          'clientVersion': '1.20240101.00.00',
+          'hl': 'en',
+          'gl': 'US',
+        },
+      },
+      'playbackContext': {
+        'contentPlaybackContext': {
+          'signatureTimestamp': 19950, // safe static value for web client
+        },
+      },
+    });
 
-    return YoutubeExplode(
-      YoutubeHttpClient(
-        _AuthenticatedHttpClient({
-          'Cookie': auth.buildCookieHeader(),
-          'Authorization': auth.buildSapisidHash(),
-          'X-Origin': 'https://music.youtube.com',
-          'Referer': 'https://music.youtube.com/',
-          'User-Agent':
-              'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) '
-              'AppleWebKit/605.1.15',
-        }),
+    final response = await http.post(
+      Uri.parse(
+        'https://music.youtube.com/youtubei/v1/player'
+        '?key=AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30',
+      ),
+      headers: headers,
+      body: body,
+    );
+
+    if (response.statusCode != 200) {
+      debugPrint('🔴 Player API error: ${response.statusCode}');
+      debugPrint(response.body);
+      return null;
+    }
+
+    final json = jsonDecode(response.body) as Map<String, dynamic>;
+
+    // Pick the best audio-only format
+    final formats = (json['streamingData']?['adaptiveFormats'] as List?)
+        ?.where(
+          (f) =>
+              (f['mimeType'] as String?)?.startsWith('audio/') == true &&
+              f['url'] != null,
+        )
+        .toList();
+
+    if (formats == null || formats.isEmpty) {
+      debugPrint('🔴 No audio formats found in player response');
+      return null;
+    }
+
+    // Sort by bitrate descending, pick highest
+    formats.sort(
+      (a, b) => ((b['averageBitrate'] ?? 0) as int).compareTo(
+        (a['averageBitrate'] ?? 0) as int,
       ),
     );
+
+    final url = formats.first['url'] as String;
+    debugPrint('✅ Stream URL resolved for $videoId');
+    return url;
+  }
+
+  Future<String?> _resolveVideoIdFromPlaylist(String playlistId) async {
+    final auth = _getAuth();
+    if (auth == null) return null;
+
+    final response = await http.post(
+      Uri.parse(
+        'https://music.youtube.com/youtubei/v1/next'
+        '?key=AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30',
+      ),
+      headers: {
+        'Content-Type': 'application/json',
+        'Cookie': auth.buildCookieHeader(),
+        'Authorization': auth.buildSapisidHash(),
+        'X-Origin': 'https://music.youtube.com',
+        'Referer': 'https://music.youtube.com/',
+      },
+      body: jsonEncode({
+        'playlistId': playlistId,
+        'context': {
+          'client': {
+            'clientName': 'WEB_REMIX',
+            'clientVersion': '1.20240101.00.00',
+            'hl': 'en',
+            'gl': 'US',
+          },
+        },
+      }),
+    );
+
+    if (response.statusCode != 200) return null;
+
+    try {
+      final json = jsonDecode(response.body);
+      // First video in the playlist queue
+      return json['currentVideoEndpoint']?['watchEndpoint']?['videoId'];
+    } catch (_) {
+      return null;
+    }
+  }
+
+  YTMusicAuthService? _getAuth() {
+    final cookies = UserSession().ytMusicCookies;
+    if (cookies == null) return null;
+    return YTMusicAuthService.fromCookieString(cookies);
   }
 
   Future<void> togglePlayPause() async {
@@ -133,27 +232,5 @@ class AudioPlayerService extends ChangeNotifier {
   void dispose() {
     _player.dispose();
     super.dispose();
-  }
-}
-
-class _AuthenticatedHttpClient extends http.BaseClient {
-  final Map<String, String> _extraHeaders;
-  final http.Client _inner = http.Client();
-
-  _AuthenticatedHttpClient(this._extraHeaders);
-
-  @override
-  Future<http.StreamedResponse> send(http.BaseRequest request) {
-    // Inject auth headers into every request made by YoutubeExplode
-    _extraHeaders.forEach((key, value) {
-      request.headers[key] = value;
-    });
-    return _inner.send(request);
-  }
-
-  @override
-  void close() {
-    _inner.close();
-    super.close();
   }
 }
