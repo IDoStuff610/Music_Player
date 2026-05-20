@@ -24,42 +24,31 @@ class _YTMusicWebViewPageState extends State<YTMusicWebViewPage> {
     );
   }
 
-  Future<void> _extractCookies({int attempt = 1}) async {
-    const maxAttempts = 8;
-    setState(() => _status = 'Extracting cookies (attempt $attempt)...');
-
-    await Future.delayed(const Duration(seconds: 1));
-
+  Future<void> _extractCookies() async {
     final cookieManager = CookieManager.instance();
-    final cookies = await cookieManager.getCookies(
-      url: WebUri('https://music.youtube.com'),
-    );
 
-    final hasSapisid = cookies.any(
-      (c) => c.name == 'SAPISID' || c.name == '__Secure-3PAPISID',
-    );
+    while (mounted) {
+      setState(() => _status = 'Waiting for cookies...');
+      await Future.delayed(const Duration(seconds: 1));
 
-    if (hasSapisid) {
-      final cookieString = cookies
-          .map((c) => '${c.name}=${c.value}')
-          .join('; ');
-      setState(() => _status = '✅ Got ${cookies.length} cookies!');
-      await Future.delayed(const Duration(milliseconds: 500));
-      if (mounted) Navigator.pop(context, cookieString);
-      return;
-    }
-
-    if (attempt >= maxAttempts) {
-      setState(
-        () => _status = '❌ Could not find SAPISID after $maxAttempts attempts',
+      final cookies = await cookieManager.getCookies(
+        url: WebUri('https://music.youtube.com'),
       );
-      await Future.delayed(const Duration(seconds: 2));
-      if (mounted) Navigator.pop(context, null); // fail gracefully
-      return;
-    }
 
-    // Retry — not recursive stack, just a new call
-    await _extractCookies(attempt: attempt + 1);
+      final hasSapisid = cookies.any(
+        (c) => c.name == 'SAPISID' || c.name == '__Secure-3PAPISID',
+      );
+
+      if (hasSapisid) {
+        final cookieString = cookies
+            .map((c) => '${c.name}=${c.value}')
+            .join('; ');
+        setState(() => _status = '✅ Got ${cookies.length} cookies!');
+        await Future.delayed(const Duration(milliseconds: 500));
+        if (mounted) Navigator.pop(context, cookieString);
+        return;
+      }
+    }
   }
 
   @override
