@@ -139,12 +139,10 @@ class YTMusicApiService {
 
   String? _extractVideoId(Map<String, dynamic> renderer) {
     try {
-      // Try overlay play button first
-      return renderer['overlay']?['musicItemThumbnailOverlayRenderer']?['content']?['musicPlayButtonRenderer']?['playNavigationEndpoint']?['watchEndpoint']?['videoId'];
+      return renderer['thumbnailOverlay']?['musicItemThumbnailOverlayRenderer']?['content']?['musicPlayButtonRenderer']?['playNavigationEndpoint']?['watchEndpoint']?['videoId'];
     } catch (_) {}
 
     try {
-      // Try navigation endpoint directly
       return renderer['navigationEndpoint']?['watchEndpoint']?['videoId'];
     } catch (_) {}
 
@@ -153,12 +151,12 @@ class YTMusicApiService {
 
   String? _extractPlaylistId(Map<String, dynamic> renderer) {
     try {
-      // From overlay play button (watchPlaylistEndpoint)
-      return renderer['overlay']?['musicItemThumbnailOverlayRenderer']?['content']?['musicPlayButtonRenderer']?['playNavigationEndpoint']?['watchPlaylistEndpoint']?['playlistId'];
+      // From thumbnailOverlay play button
+      return renderer['thumbnailOverlay']?['musicItemThumbnailOverlayRenderer']?['content']?['musicPlayButtonRenderer']?['playNavigationEndpoint']?['watchPlaylistEndpoint']?['playlistId'];
     } catch (_) {}
 
     try {
-      // From navigation endpoint browseEndpoint
+      // From navigation endpoint
       return renderer['navigationEndpoint']?['browseEndpoint']?['browseId'];
     } catch (_) {}
 
