@@ -24,10 +24,11 @@ class _YTMusicWebViewPageState extends State<YTMusicWebViewPage> {
     );
   }
 
-  Future<void> _extractCookies() async {
-    setState(() => _status = 'Extracting cookies...');
+  Future<void> _extractCookies({int attempt = 1}) async {
+    const maxAttempts = 8;
+    setState(() => _status = 'Extracting cookies (attempt $attempt)...');
 
-    await Future.delayed(const Duration(seconds: 2));
+    await Future.delayed(const Duration(seconds: 1));
 
     final cookieManager = CookieManager.instance();
     final cookies = await cookieManager.getCookies(
@@ -38,18 +39,27 @@ class _YTMusicWebViewPageState extends State<YTMusicWebViewPage> {
       (c) => c.name == 'SAPISID' || c.name == '__Secure-3PAPISID',
     );
 
-    if (!hasSapisid) {
-      setState(() => _status = '⚠️ SAPISID not found yet, retrying...');
-      await Future.delayed(const Duration(seconds: 2));
-      await _extractCookies();
+    if (hasSapisid) {
+      final cookieString = cookies
+          .map((c) => '${c.name}=${c.value}')
+          .join('; ');
+      setState(() => _status = '✅ Got ${cookies.length} cookies!');
+      await Future.delayed(const Duration(milliseconds: 500));
+      if (mounted) Navigator.pop(context, cookieString);
       return;
     }
 
-    final cookieString = cookies.map((c) => '${c.name}=${c.value}').join('; ');
-    setState(() => _status = '✅ Got ${cookies.length} cookies! SAPISID found.');
+    if (attempt >= maxAttempts) {
+      setState(
+        () => _status = '❌ Could not find SAPISID after $maxAttempts attempts',
+      );
+      await Future.delayed(const Duration(seconds: 2));
+      if (mounted) Navigator.pop(context, null); // fail gracefully
+      return;
+    }
 
-    await Future.delayed(const Duration(seconds: 1));
-    if (mounted) Navigator.pop(context, cookieString);
+    // Retry — not recursive stack, just a new call
+    await _extractCookies(attempt: attempt + 1);
   }
 
   @override
