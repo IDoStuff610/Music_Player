@@ -216,6 +216,19 @@ class _PlayerSheetState extends State<PlayerSheet>
               ),
             ),
 
+            if (_service.error != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 32,
+                  vertical: 8,
+                ),
+                child: Text(
+                  _service.error!,
+                  style: const TextStyle(color: Colors.redAccent, fontSize: 11),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+
             const SizedBox(height: 24),
 
             // Progress bar

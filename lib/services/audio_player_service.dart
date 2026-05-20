@@ -27,7 +27,7 @@ class AudioPlayerService extends ChangeNotifier {
 
   Future<void> play(MusicItem item) async {
     if (item.videoId == null && item.playlistId == null) {
-      error = 'No video ID or playlist ID for this track';
+      error = 'No video ID or playlist ID';
       notifyListeners();
       return;
     }
@@ -40,7 +40,6 @@ class AudioPlayerService extends ChangeNotifier {
     try {
       String? videoIdToPlay = item.videoId;
 
-      // If no direct videoId, get first track from playlist
       if (videoIdToPlay == null && item.playlistId != null) {
         final playlist = await _yt.playlists.getVideos(item.playlistId!).first;
         videoIdToPlay = playlist.id.value;
@@ -75,8 +74,9 @@ class AudioPlayerService extends ChangeNotifier {
 
       await _player.play();
     } catch (e) {
-      error = e.toString();
-      currentItem = null;
+      error = e.toString(); // keep currentItem so player stays open
+      isLoading = false;
+      notifyListeners();
     } finally {
       isLoading = false;
       notifyListeners();
