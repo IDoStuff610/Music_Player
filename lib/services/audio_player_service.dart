@@ -134,54 +134,37 @@ class AudioPlayerService extends ChangeNotifier {
       body: body,
     );
 
-    if (response.statusCode != 200) {
-      debugPrint('🔴 Player API error: ${response.statusCode}');
-      debugPrint(response.body);
-      return null;
-    }
+    // ---- DUMP EVERYTHING ----
+    debugPrint('=== PLAYER API RESPONSE ===');
+    debugPrint('Status: ${response.statusCode}');
+    debugPrint('Body: ${response.body}'); // <-- paste this output to me
+    debugPrint('===========================');
+
+    if (response.statusCode != 200) return null;
 
     final json = jsonDecode(response.body) as Map<String, dynamic>;
-
     final playabilityStatus = json['playabilityStatus']?['status'];
-    debugPrint('▶️ playabilityStatus: $playabilityStatus');
-    if (playabilityStatus != 'OK') {
-      debugPrint('🔴 Not playable: ${json['playabilityStatus']?['reason']}');
-      return null;
-    }
+    final reason = json['playabilityStatus']?['reason'];
+    debugPrint('playabilityStatus: $playabilityStatus');
+    debugPrint('reason: $reason');
+
+    final streamingDataKeys = json['streamingData']?.keys?.toList();
+    debugPrint('streamingData keys: $streamingDataKeys');
 
     final adaptiveFormats =
         (json['streamingData']?['adaptiveFormats'] as List? ?? []);
     final regularFormats = (json['streamingData']?['formats'] as List? ?? []);
+    debugPrint('adaptiveFormats count: ${adaptiveFormats.length}');
+    debugPrint('regularFormats count: ${regularFormats.length}');
 
-    final allFormats = [...adaptiveFormats, ...regularFormats];
-
-    final audioFormats = allFormats
-        .where(
-          (f) =>
-              (f['mimeType'] as String?)?.startsWith('audio/') == true &&
-              f['url'] != null,
-        )
-        .toList();
-
-    if (audioFormats.isEmpty) {
-      debugPrint(
-        '🔴 No audio formats. streamingData keys: ${json['streamingData']?.keys}',
-      );
-      if (allFormats.isNotEmpty) {
-        debugPrint('🔴 First format sample: ${allFormats.first}');
-      }
-      return null;
+    if (adaptiveFormats.isNotEmpty) {
+      debugPrint('First adaptiveFormat: ${adaptiveFormats.first}');
+    }
+    if (regularFormats.isNotEmpty) {
+      debugPrint('First regularFormat: ${regularFormats.first}');
     }
 
-    audioFormats.sort(
-      (a, b) => ((b['averageBitrate'] ?? b['bitrate'] ?? 0) as int).compareTo(
-        (a['averageBitrate'] ?? a['bitrate'] ?? 0) as int,
-      ),
-    );
-
-    final url = audioFormats.first['url'] as String;
-    debugPrint('✅ Stream URL resolved for $videoId');
-    return url;
+    return null; // forced null for now — just getting the logs
   }
 
   Future<String?> _resolveVideoIdFromPlaylist(String playlistId) async {
