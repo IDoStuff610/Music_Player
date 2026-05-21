@@ -216,41 +216,54 @@ class _PlayerSheetState extends State<PlayerSheet>
               ),
             ),
 
-            // Already exists — your error display:
-            if (_service.error != null)
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 32,
-                  vertical: 8,
-                ),
-                child: Text(
-                  _service.error!,
-                  style: const TextStyle(color: Colors.redAccent, fontSize: 11),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-
-            // ADD THIS right after:
-            if (_service.debugInfo != null)
+            // Combined scrollable error + debug panel
+            if (_service.error != null || _service.debugInfo != null)
               Padding(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 16,
-                  vertical: 4,
+                  vertical: 8,
                 ),
                 child: Container(
-                  height: 180, // fixed height with scroll
-                  padding: const EdgeInsets.all(8),
+                  constraints: BoxConstraints(
+                    maxHeight: MediaQuery.of(context).size.height * 0.35,
+                  ),
+                  padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
                     color: Colors.grey.shade900,
                     borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: _service.error != null
+                          ? Colors.redAccent.withOpacity(0.5)
+                          : Colors.grey.shade700,
+                      width: 1,
+                    ),
                   ),
                   child: SingleChildScrollView(
-                    child: Text(
-                      _service.debugInfo!,
-                      style: const TextStyle(
-                        color: Colors.yellowAccent,
-                        fontSize: 10,
-                      ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (_service.error != null)
+                          Text(
+                            _service.error!,
+                            style: const TextStyle(
+                              color: Colors.redAccent,
+                              fontSize: 11,
+                              height: 1.4,
+                            ),
+                          ),
+                        if (_service.error != null &&
+                            _service.debugInfo != null)
+                          const Divider(color: Colors.grey, height: 16),
+                        if (_service.debugInfo != null)
+                          Text(
+                            _service.debugInfo!,
+                            style: const TextStyle(
+                              color: Colors.yellowAccent,
+                              fontSize: 10,
+                              height: 1.4,
+                            ),
+                          ),
+                      ],
                     ),
                   ),
                 ),
