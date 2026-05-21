@@ -19,6 +19,9 @@ class AudioPlayerService extends ChangeNotifier {
   String? error;
   String? debugInfo;
 
+  // Cached API key fetched dynamically from YouTube
+  String? _cachedApiKey;
+
   Stream<PlayerState> get playerStateStream => _player.playerStateStream;
   Stream<Duration> get positionStream => _player.positionStream;
   Stream<Duration?> get durationStream => _player.durationStream;
@@ -82,6 +85,38 @@ class AudioPlayerService extends ChangeNotifier {
     }
   }
 
+  /// Fetches the real INNERTUBE_API_KEY from YouTube's homepage HTML.
+  /// This avoids hardcoding keys that expire or change.
+  Future<String> _getApiKey() async {
+    if (_cachedApiKey != null) return _cachedApiKey!;
+
+    try {
+      final response = await http.get(
+        Uri.parse('https://www.youtube.com/'),
+        headers: {
+          'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+              'AppleWebKit/537.36 (KHTML, like Gecko) '
+              'Chrome/120.0.0.0 Safari/537.36',
+          'Accept-Language': 'en-US,en;q=0.9',
+        },
+      );
+
+      final body = response.body;
+      final match = RegExp(r'"INNERTUBE_API_KEY":"([^"]+)"').firstMatch(body);
+      if (match != null) {
+        _cachedApiKey = match.group(1);
+        debugPrint('✅ Fetched API key: $_cachedApiKey');
+        return _cachedApiKey!;
+      }
+    } catch (e) {
+      debugPrint('Failed to fetch API key: $e');
+    }
+
+    // Fallback to known key
+    return 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
+  }
+
   Future<String?> _fetchStreamUrl(String videoId) async {
     final auth = _getAuth();
     if (auth == null) {
@@ -90,30 +125,31 @@ class AudioPlayerService extends ChangeNotifier {
       return null;
     }
 
-    final logs = <String>[];
+    final apiKey = await _getApiKey();
+    final logs = <String>['apiKey=${apiKey.substring(0, 12)}...'];
 
-    // Each client has its own correct API key + body + headers
+    final baseUrl = 'https://www.youtube.com/youtubei/v1/player?key=$apiKey';
+
     final clients = <Map<String, dynamic>>[
-      // 1. ANDROID with CgIQBg param — the known working bypass
+      // ANDROID — current working versions per Invidious/NewPipe
       {
-        'name': 'ANDROID+CgIQBg',
-        'url':
-            'https://www.youtube.com/youtubei/v1/player'
-            '?key=AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w',
+        'name': 'ANDROID',
         'headers': {
           'Content-Type': 'application/json',
           'User-Agent':
-              'com.google.android.youtube/18.11.34(Linux; U; Android 11) gzip',
+              'com.google.android.youtube/19.09.36 (Linux; U; Android 12; US) gzip',
           'X-Goog-Api-Format-Version': '1',
         },
         'body': jsonEncode({
           'videoId': videoId,
-          'params': 'CgIQBg==', // integrity bypass param
+          'params': 'CgIQBg==',
           'context': {
             'client': {
               'clientName': 'ANDROID',
-              'clientVersion': '18.11.34',
-              'androidSdkVersion': 30,
+              'clientVersion': '19.09.36',
+              'androidSdkVersion': 31,
+              'osName': 'Android',
+              'osVersion': '12',
               'hl': 'en',
               'gl': 'US',
               'utcOffsetMinutes': 0,
@@ -121,35 +157,9 @@ class AudioPlayerService extends ChangeNotifier {
           },
         }),
       },
-      // 2. TVHTML5 embedded — no API key needed, no auth
-      {
-        'name': 'TVHTML5_EMBEDDED',
-        'url': 'https://www.youtube.com/youtubei/v1/player',
-        'headers': {
-          'Content-Type': 'application/json',
-          'Origin': 'https://www.youtube.com',
-          'Referer': 'https://www.youtube.com/',
-        },
-        'body': jsonEncode({
-          'videoId': videoId,
-          'context': {
-            'client': {
-              'clientName': 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
-              'clientVersion': '2.0',
-              'hl': 'en',
-              'gl': 'US',
-              'utcOffsetMinutes': 0,
-            },
-            'thirdParty': {'embedUrl': 'https://www.youtube.com'},
-          },
-        }),
-      },
-      // 3. IOS with correct version and API key
+      // IOS — current working versions
       {
         'name': 'IOS',
-        'url':
-            'https://www.youtube.com/youtubei/v1/player'
-            '?key=AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc',
         'headers': {
           'Content-Type': 'application/json',
           'User-Agent':
@@ -173,13 +183,43 @@ class AudioPlayerService extends ChangeNotifier {
           },
         }),
       },
+      // WEB — authenticated, may return cipher but worth trying
+      {
+        'name': 'WEB',
+        'headers': {
+          'Content-Type': 'application/json',
+          'Cookie': auth.buildCookieHeader(),
+          'Authorization': auth.buildSapisidHash(),
+          'X-Origin': 'https://www.youtube.com',
+          'Referer': 'https://www.youtube.com/',
+          'Origin': 'https://www.youtube.com',
+          'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+              'AppleWebKit/537.36 (KHTML, like Gecko) '
+              'Chrome/120.0.0.0 Safari/537.36',
+        },
+        'body': jsonEncode({
+          'videoId': videoId,
+          'racyCheckOk': true,
+          'contentCheckOk': true,
+          'context': {
+            'client': {
+              'clientName': 'WEB',
+              'clientVersion': '2.20240304.00.00',
+              'hl': 'en',
+              'gl': 'US',
+              'utcOffsetMinutes': 0,
+            },
+          },
+        }),
+      },
     ];
 
     for (final client in clients) {
       final name = client['name'] as String;
       try {
         final response = await http.post(
-          Uri.parse(client['url'] as String),
+          Uri.parse(baseUrl),
           headers: Map<String, String>.from(client['headers'] as Map),
           body: client['body'] as String,
         );
@@ -218,7 +258,7 @@ class AudioPlayerService extends ChangeNotifier {
 
         logs.add(
           '[$name] OK total=${allFormats.length} '
-          'audioWithUrl=${audioWithUrl.length} cipher=$cipherCount',
+          'audioUrl=${audioWithUrl.length} cipher=$cipherCount',
         );
 
         if (audioWithUrl.isNotEmpty) {
