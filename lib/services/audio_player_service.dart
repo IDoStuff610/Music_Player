@@ -88,7 +88,7 @@ class AudioPlayerService extends ChangeNotifier {
       await _player.play();
     } catch (e) {
       error = e.toString();
-      debugInfo = (debugInfo ?? '') + '\nOuter error: $e';
+      debugInfo = (debugInfo ?? '') + '\nException: $e';
     } finally {
       isLoading = false;
       notifyListeners();
@@ -100,21 +100,18 @@ class AudioPlayerService extends ChangeNotifier {
   Future<String?> _getStreamUrl(String videoId) async {
     final cookies = UserSession().ytMusicCookies;
     final ytmAuth = _getAuth();
+    final log = StringBuffer();
 
-    String log = '';
-
-    // ── 1. WEB_REMIX client (authenticated, music.youtube.com) ─────────────
-    // Most reliable for authenticated YT Music users. Returns plain URLs
-    // when the user is logged in with valid cookies.
+    // ── 1. WEB_REMIX (authenticated, music.youtube.com) ──────────────────
+    // The actual YT Music web client. With valid cookies this returns
+    // plain signed URLs — no cipher needed.
     if (ytmAuth != null) {
       const clientName = 'WEB_REMIX';
-      log += '\n[$clientName]\n';
+      log.writeln('[$clientName]');
       try {
         final resp = await http.post(
           Uri.parse(
-            'https://music.youtube.com/youtubei/v1/player'
-            '?key=AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30'
-            '&prettyPrint=false',
+            'https://music.youtube.com/youtubei/v1/player?prettyPrint=false',
           ),
           headers: {
             'Content-Type': 'application/json',
@@ -127,8 +124,6 @@ class AudioPlayerService extends ChangeNotifier {
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
                 'AppleWebKit/537.36 (KHTML, like Gecko) '
                 'Chrome/124.0.0.0 Safari/537.36',
-            'X-Youtube-Client-Name': '67',
-            'X-Youtube-Client-Version': '1.20240508.01.00',
           },
           body: jsonEncode({
             'videoId': videoId,
@@ -144,42 +139,41 @@ class AudioPlayerService extends ChangeNotifier {
             },
           }),
         );
-        log += 'HTTP ${resp.statusCode}\n';
+        log.writeln('HTTP ${resp.statusCode}');
         if (resp.statusCode == 200) {
-          final url = _extractAudioUrl(resp.body, clientName, log);
-          if (url != null) {
-            debugInfo = log;
+          final result = _extractAudioUrlVerbose(resp.body);
+          log.writeln(result.log);
+          if (result.url != null) {
+            debugInfo = log.toString();
             notifyListeners();
-            return url;
+            return result.url;
           }
-          _appendPlayabilityLog(resp.body, log);
         } else {
-          log += resp.body.substring(0, resp.body.length.clamp(0, 300)) + '\n';
+          log.writeln(resp.body.substring(0, resp.body.length.clamp(0, 300)));
         }
       } catch (e) {
-        log += 'Exception: $e\n';
+        log.writeln('Exception: $e');
       }
     }
 
-    // ── 2. ANDROID client (com.google.android.youtube) ───────────────────
-    // Standard Android YouTube app client. Returns plain URLs without
-    // cipher. Use authenticated cookies if available.
+    // ── 2. MWEB (mobile Safari UA, no poToken needed) ────────────────────
+    // The mobile web client reliably returns plain URLs on iOS user-agents.
+    // Sending cookies makes it work for music that needs login.
     {
-      const clientName = 'ANDROID';
-      log += '\n[$clientName]\n';
+      const clientName = 'MWEB';
+      log.writeln('\n[$clientName]');
       try {
         final headers = <String, String>{
           'Content-Type': 'application/json',
           'User-Agent':
-              'com.google.android.youtube/18.11.34 '
-              '(Linux; U; Android 11) gzip',
-          'X-Youtube-Client-Name': '3',
-          'X-Youtube-Client-Version': '18.11.34',
+              'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) '
+              'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 '
+              'Mobile/15E148 Safari/604.1',
           'Origin': 'https://www.youtube.com',
+          'Referer': 'https://www.youtube.com/',
         };
-        if (cookies != null) {
-          final auth = YTMusicAuthService.fromCookieString(cookies);
-          headers['Cookie'] = auth.buildCookieHeader();
+        if (ytmAuth != null && cookies != null) {
+          headers['Cookie'] = ytmAuth.buildCookieHeader();
           headers['Authorization'] = _buildSapisidHash(
             cookies,
             'https://www.youtube.com',
@@ -187,9 +181,7 @@ class AudioPlayerService extends ChangeNotifier {
         }
         final resp = await http.post(
           Uri.parse(
-            'https://www.youtube.com/youtubei/v1/player'
-            '?key=AIzaSyA8eiZmM1fanX9-SfZ3xHvFOHiJQMzQwAw'
-            '&prettyPrint=false',
+            'https://www.youtube.com/youtubei/v1/player?prettyPrint=false',
           ),
           headers: headers,
           body: jsonEncode({
@@ -199,53 +191,58 @@ class AudioPlayerService extends ChangeNotifier {
             'context': {
               'client': {
                 'clientName': clientName,
-                'clientVersion': '18.11.34',
-                'androidSdkVersion': 30,
-                'osName': 'Android',
-                'osVersion': '11',
+                'clientVersion': '2.20240508.01.00',
                 'hl': 'en',
                 'gl': 'US',
               },
             },
           }),
         );
-        log += 'HTTP ${resp.statusCode}\n';
+        log.writeln('HTTP ${resp.statusCode}');
         if (resp.statusCode == 200) {
-          final url = _extractAudioUrl(resp.body, clientName, log);
-          if (url != null) {
-            debugInfo = log;
+          final result = _extractAudioUrlVerbose(resp.body);
+          log.writeln(result.log);
+          if (result.url != null) {
+            debugInfo = log.toString();
             notifyListeners();
-            return url;
+            return result.url;
           }
-          _appendPlayabilityLog(resp.body, log);
         } else {
-          log += resp.body.substring(0, resp.body.length.clamp(0, 300)) + '\n';
+          log.writeln(resp.body.substring(0, resp.body.length.clamp(0, 300)));
         }
       } catch (e) {
-        log += 'Exception: $e\n';
+        log.writeln('Exception: $e');
       }
     }
 
-    // ── 3. ANDROID_TESTSUITE client ────────────────────────────────────────
-    // Lightweight test client that often bypasses restrictions.
-    // No auth needed.
+    // ── 3. IOS_MUSIC client ───────────────────────────────────────────────
+    // The actual YouTube Music iOS app client. Always returns plain URLs.
+    // Uses the YouTube Music iOS app bundle ID and a current version string.
     {
-      const clientName = 'ANDROID_TESTSUITE';
-      log += '\n[$clientName]\n';
+      const clientName = 'IOS_MUSIC';
+      log.writeln('\n[$clientName]');
       try {
+        final headers = <String, String>{
+          'Content-Type': 'application/json',
+          'User-Agent':
+              'com.google.ios.youtubemusic/7.16.0 '
+              '(iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X; en_US)',
+          'X-Youtube-Client-Name': '26',
+          'X-Youtube-Client-Version': '7.16.0',
+          'Origin': 'https://music.youtube.com',
+        };
+        if (ytmAuth != null && cookies != null) {
+          headers['Cookie'] = ytmAuth.buildCookieHeader();
+          headers['Authorization'] = _buildSapisidHash(
+            cookies,
+            'https://music.youtube.com',
+          );
+        }
         final resp = await http.post(
           Uri.parse(
-            'https://www.youtube.com/youtubei/v1/player'
-            '?prettyPrint=false',
+            'https://music.youtube.com/youtubei/v1/player?prettyPrint=false',
           ),
-          headers: {
-            'Content-Type': 'application/json',
-            'User-Agent':
-                'com.google.android.youtube/1.9.38.43 '
-                '(Linux; U; Android 11) gzip',
-            'X-Youtube-Client-Name': '30',
-            'X-Youtube-Client-Version': '1.9.38.43',
-          },
+          headers: headers,
           body: jsonEncode({
             'videoId': videoId,
             'contentCheckOk': true,
@@ -253,101 +250,182 @@ class AudioPlayerService extends ChangeNotifier {
             'context': {
               'client': {
                 'clientName': clientName,
-                'clientVersion': '1.9.38.43',
-                'androidSdkVersion': 30,
+                'clientVersion': '7.16.0',
+                'deviceMake': 'Apple',
+                'deviceModel': 'iPhone16,2',
+                'osName': 'iPhone',
+                'osVersion': '17.5.1.21F90',
                 'hl': 'en',
                 'gl': 'US',
               },
             },
           }),
         );
-        log += 'HTTP ${resp.statusCode}\n';
+        log.writeln('HTTP ${resp.statusCode}');
         if (resp.statusCode == 200) {
-          final url = _extractAudioUrl(resp.body, clientName, log);
-          if (url != null) {
-            debugInfo = log;
+          final result = _extractAudioUrlVerbose(resp.body);
+          log.writeln(result.log);
+          if (result.url != null) {
+            debugInfo = log.toString();
             notifyListeners();
-            return url;
+            return result.url;
           }
-          _appendPlayabilityLog(resp.body, log);
         } else {
-          log += resp.body.substring(0, resp.body.length.clamp(0, 300)) + '\n';
+          log.writeln(resp.body.substring(0, resp.body.length.clamp(0, 300)));
         }
       } catch (e) {
-        log += 'Exception: $e\n';
+        log.writeln('Exception: $e');
       }
     }
 
-    debugInfo = 'All clients failed:\n$log';
+    // ── 4. IOS client (youtube.com, not music) ────────────────────────────
+    // The standard YouTube iOS app — different from Music app.
+    // Client name 5, no API key required.
+    {
+      const clientName = 'IOS';
+      log.writeln('\n[$clientName]');
+      try {
+        final headers = <String, String>{
+          'Content-Type': 'application/json',
+          'User-Agent':
+              'com.google.ios.youtube/19.45.4 '
+              '(iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X; en_US)',
+          'X-Youtube-Client-Name': '5',
+          'X-Youtube-Client-Version': '19.45.4',
+          'Origin': 'https://www.youtube.com',
+        };
+        if (ytmAuth != null && cookies != null) {
+          headers['Cookie'] = ytmAuth.buildCookieHeader();
+          headers['Authorization'] = _buildSapisidHash(
+            cookies,
+            'https://www.youtube.com',
+          );
+        }
+        final resp = await http.post(
+          Uri.parse(
+            'https://www.youtube.com/youtubei/v1/player?prettyPrint=false',
+          ),
+          headers: headers,
+          body: jsonEncode({
+            'videoId': videoId,
+            'contentCheckOk': true,
+            'racyCheckOk': true,
+            'context': {
+              'client': {
+                'clientName': clientName,
+                'clientVersion': '19.45.4',
+                'deviceMake': 'Apple',
+                'deviceModel': 'iPhone16,2',
+                'osName': 'iPhone',
+                'osVersion': '17.5.1.21F90',
+                'hl': 'en',
+                'gl': 'US',
+              },
+            },
+          }),
+        );
+        log.writeln('HTTP ${resp.statusCode}');
+        if (resp.statusCode == 200) {
+          final result = _extractAudioUrlVerbose(resp.body);
+          log.writeln(result.log);
+          if (result.url != null) {
+            debugInfo = log.toString();
+            notifyListeners();
+            return result.url;
+          }
+        } else {
+          log.writeln(resp.body.substring(0, resp.body.length.clamp(0, 300)));
+        }
+      } catch (e) {
+        log.writeln('Exception: $e');
+      }
+    }
+
+    debugInfo = 'All clients failed:\n${log.toString()}';
     notifyListeners();
     return null;
   }
 
-  void _appendPlayabilityLog(String body, String log) {
-    try {
-      final j = jsonDecode(body) as Map<String, dynamic>;
-      final status = j['playabilityStatus']?['status'];
-      final reason = j['playabilityStatus']?['reason'];
-      final hasStreaming = j.containsKey('streamingData');
-      final adaptiveCount =
-          (j['streamingData']?['adaptiveFormats'] as List?)?.length ?? 0;
-      final hasCipher =
-          (j['streamingData']?['adaptiveFormats'] as List?)?.any(
-            (f) => f['signatureCipher'] != null || f['cipher'] != null,
-          ) ??
-          false;
-      log +=
-          'status=$status reason=$reason hasStreaming=$hasStreaming '
-          'adaptiveCount=$adaptiveCount hasCipher=$hasCipher\n';
-    } catch (_) {}
-  }
+  // ─── Verbose URL extractor ───────────────────────────────────────────────
 
-  /// Parses the player response and returns the best plain audio URL.
-  String? _extractAudioUrl(String body, String clientName, String log) {
+  _ExtractResult _extractAudioUrlVerbose(String body) {
+    final log = StringBuffer();
     try {
       final j = jsonDecode(body) as Map<String, dynamic>;
 
       final status = j['playabilityStatus']?['status'] as String?;
-      if (status != null && status != 'OK') return null;
+      final reason = j['playabilityStatus']?['reason'] as String?;
+      log.writeln('  status=$status${reason != null ? ' reason=$reason' : ''}');
+
+      if (status != null && status != 'OK') {
+        return _ExtractResult(null, log.toString());
+      }
 
       final adaptive = j['streamingData']?['adaptiveFormats'] as List? ?? [];
       final regular = j['streamingData']?['formats'] as List? ?? [];
+      final all = [...adaptive, ...regular];
 
-      final allAudio = <Map<String, dynamic>>[];
-      for (final f in [...adaptive, ...regular]) {
+      int plainCount = 0, cipherCount = 0, audioPlainCount = 0;
+      final audioFormats = <Map<String, dynamic>>[];
+
+      for (final f in all) {
         final fmt = f as Map<String, dynamic>;
         final mime = fmt['mimeType']?.toString() ?? '';
         final hasUrl = fmt.containsKey('url');
-        if (!hasUrl) continue;
-        if (mime.contains('audio') || adaptive.isEmpty) allAudio.add(fmt);
+        final hasCipher =
+            fmt.containsKey('signatureCipher') || fmt.containsKey('cipher');
+        if (hasUrl) plainCount++;
+        if (hasCipher) cipherCount++;
+        if (hasUrl && mime.contains('audio')) {
+          audioPlainCount++;
+          audioFormats.add(fmt);
+        }
       }
 
-      if (allAudio.isEmpty) return null;
+      log.writeln(
+        '  formats=${all.length} plain=$plainCount '
+        'ciphered=$cipherCount audioPlain=$audioPlainCount',
+      );
 
-      allAudio.sort((a, b) {
+      if (audioFormats.isEmpty) {
+        // Fall back to any plain format (mixed audio+video)
+        if (plainCount > 0) {
+          for (final f in all) {
+            final fmt = f as Map<String, dynamic>;
+            final url = fmt['url'] as String?;
+            if (url != null) {
+              log.writeln('  ✅ fallback mixed: ${fmt['mimeType']}');
+              return _ExtractResult(url, log.toString());
+            }
+          }
+        }
+        return _ExtractResult(null, log.toString());
+      }
+
+      audioFormats.sort((a, b) {
         final aBr = (a['bitrate'] as num?)?.toInt() ?? 0;
         final bBr = (b['bitrate'] as num?)?.toInt() ?? 0;
         return bBr.compareTo(aBr);
       });
 
-      final m4a = allAudio.where((f) {
+      final m4a = audioFormats.where((f) {
         final mime = f['mimeType']?.toString() ?? '';
         return mime.contains('mp4a.40.2') || mime.contains('audio/mp4');
       }).toList();
 
-      final chosen = m4a.isNotEmpty ? m4a.first : allAudio.first;
+      final chosen = m4a.isNotEmpty ? m4a.first : audioFormats.first;
       final url = chosen['url'] as String?;
-      if (url == null) return null;
+      if (url == null) return _ExtractResult(null, log.toString());
 
-      final bitrate = chosen['bitrate'];
-      final mime = chosen['mimeType'];
-      debugInfo = '✅ $clientName: $bitrate bps | $mime\n$log';
-      notifyListeners();
-      return url;
-    } catch (_) {
-      return null;
+      log.writeln('  ✅ ${chosen['bitrate']} bps | ${chosen['mimeType']}');
+      return _ExtractResult(url, log.toString());
+    } catch (e) {
+      log.writeln('  parse error: $e');
+      return _ExtractResult(null, log.toString());
     }
   }
+
+  // ─── SAPISID hash ────────────────────────────────────────────────────────
 
   String _buildSapisidHash(String cookieString, String origin) {
     String? sapisid;
@@ -361,10 +439,9 @@ class AudioPlayerService extends ChangeNotifier {
       }
     }
     if (sapisid == null) return '';
-    final timestamp = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-    final input = '$timestamp $sapisid $origin';
-    final hash = sha1.convert(utf8.encode(input)).toString();
-    return 'SAPISIDHASH ${timestamp}_$hash';
+    final ts = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final hash = sha1.convert(utf8.encode('$ts $sapisid $origin')).toString();
+    return 'SAPISIDHASH ${ts}_$hash';
   }
 
   // ─── Download to temp ────────────────────────────────────────────────────
@@ -375,35 +452,34 @@ class AudioPlayerService extends ChangeNotifier {
       final file = File('${dir.path}/yt_audio_$videoId.mp4');
 
       if (await file.exists()) {
-        debugInfo = '✅ Using cached file\n$debugInfo';
+        debugInfo = '✅ Using cached file\n${debugInfo ?? ''}';
         notifyListeners();
         return file;
       }
 
-      debugInfo = 'Downloading...\n$debugInfo';
+      debugInfo = 'Downloading...\n${debugInfo ?? ''}';
       notifyListeners();
 
-      final request = http.Request('GET', Uri.parse(streamUrl));
-      final streamedResponse = await request.send();
+      final req = http.Request('GET', Uri.parse(streamUrl));
+      final streamed = await req.send();
 
-      if (streamedResponse.statusCode != 200) {
-        debugInfo = 'Download HTTP ${streamedResponse.statusCode}\n$debugInfo';
+      if (streamed.statusCode != 200) {
+        debugInfo = 'Download HTTP ${streamed.statusCode}\n${debugInfo ?? ''}';
         notifyListeners();
         return null;
       }
 
-      final output = file.openWrite();
-      await streamedResponse.stream.pipe(output);
-      await output.flush();
-      await output.close();
+      final out = file.openWrite();
+      await streamed.stream.pipe(out);
+      await out.flush();
+      await out.close();
 
-      final fileSize = await file.length();
-      debugInfo =
-          '✅ ${(fileSize / 1024).toStringAsFixed(1)} KB downloaded\n$debugInfo';
+      final kb = (await file.length()) / 1024;
+      debugInfo = '✅ ${kb.toStringAsFixed(1)} KB\n${debugInfo ?? ''}';
       notifyListeners();
       return file;
     } catch (e) {
-      debugInfo = 'Download error: $e\n$debugInfo';
+      debugInfo = 'Download error: $e\n${debugInfo ?? ''}';
       notifyListeners();
       return null;
     }
@@ -415,7 +491,7 @@ class AudioPlayerService extends ChangeNotifier {
     final auth = _getAuth();
     if (auth == null) return null;
     try {
-      final response = await http.post(
+      final resp = await http.post(
         Uri.parse('https://music.youtube.com/youtubei/v1/next'),
         headers: {
           'Content-Type': 'application/json',
@@ -436,9 +512,9 @@ class AudioPlayerService extends ChangeNotifier {
           },
         }),
       );
-      if (response.statusCode != 200) return null;
-      final json = jsonDecode(response.body);
-      return json['currentVideoEndpoint']?['watchEndpoint']?['videoId'];
+      if (resp.statusCode != 200) return null;
+      final j = jsonDecode(resp.body);
+      return j['currentVideoEndpoint']?['watchEndpoint']?['videoId'];
     } catch (_) {
       return null;
     }
@@ -456,28 +532,28 @@ class AudioPlayerService extends ChangeNotifier {
       final files = dir.listSync().whereType<File>().where(
         (f) => f.path.contains('yt_audio_'),
       );
-      for (final f in files) {
-        await f.delete();
-      }
+      for (final f in files) await f.delete();
     } catch (_) {}
   }
 
   Future<void> togglePlayPause() async {
-    if (_player.playing) {
-      await _player.pause();
-    } else {
-      await _player.play();
-    }
+    _player.playing ? await _player.pause() : await _player.play();
     notifyListeners();
   }
 
-  Future<void> seekTo(Duration position) async {
-    await _player.seek(position);
-  }
+  Future<void> seekTo(Duration position) async => _player.seek(position);
 
   @override
   void dispose() {
     _player.dispose();
     super.dispose();
   }
+}
+
+// ─── Internal result type ─────────────────────────────────────────────────────
+
+class _ExtractResult {
+  final String? url;
+  final String log;
+  const _ExtractResult(this.url, this.log);
 }
