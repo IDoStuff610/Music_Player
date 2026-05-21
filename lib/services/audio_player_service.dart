@@ -91,41 +91,103 @@ class AudioPlayerService extends ChangeNotifier {
       return null;
     }
 
-    // Try multiple clients in order until one returns a plain URL
-    final clients = [_buildTvEmbeddedBody(videoId), _buildIosBody(videoId)];
+    // Collect logs from every client attempt
+    final logs = <String>[];
 
-    final clientNames = ['TVHTML5_SIMPLY_EMBEDDED_PLAYER', 'IOS'];
+    final clients = <Map<String, dynamic>>[
+      {
+        'name': 'TVHTML5_SIMPLY_EMBEDDED',
+        'body': jsonEncode({
+          'videoId': videoId,
+          'context': {
+            'client': {
+              'clientName': 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
+              'clientVersion': '2.0',
+              'hl': 'en',
+              'gl': 'US',
+              'utcOffsetMinutes': 0,
+            },
+            'thirdParty': {'embedUrl': 'https://music.youtube.com'},
+          },
+        }),
+        'headers': {
+          'Content-Type': 'application/json',
+          'Cookie': auth.buildCookieHeader(),
+          'Authorization': auth.buildSapisidHash(),
+          'X-Origin': 'https://music.youtube.com',
+          'Referer': 'https://music.youtube.com/',
+          'Origin': 'https://music.youtube.com',
+        },
+      },
+      {
+        'name': 'IOS',
+        'body': jsonEncode({
+          'videoId': videoId,
+          'context': {
+            'client': {
+              'clientName': 'IOS',
+              'clientVersion': '19.09.3',
+              'deviceMake': 'Apple',
+              'deviceModel': 'iPhone16,2',
+              'osName': 'iPhone',
+              'osVersion': '17.4.0.21E219',
+              'hl': 'en',
+              'gl': 'US',
+              'utcOffsetMinutes': 0,
+            },
+          },
+        }),
+        // IOS client — NO auth headers, send unauthenticated
+        'headers': {
+          'Content-Type': 'application/json',
+          'User-Agent':
+              'com.google.ios.youtube/19.09.3 (iPhone16,2; U; CPU iOS 17_4_0 like Mac OS X)',
+        },
+      },
+      {
+        'name': 'ANDROID',
+        'body': jsonEncode({
+          'videoId': videoId,
+          'context': {
+            'client': {
+              'clientName': 'ANDROID',
+              'clientVersion': '18.11.34',
+              'androidSdkVersion': 30,
+              'hl': 'en',
+              'gl': 'US',
+              'utcOffsetMinutes': 0,
+            },
+          },
+        }),
+        // ANDROID client — NO auth headers either
+        'headers': {
+          'Content-Type': 'application/json',
+          'User-Agent':
+              'com.google.android.youtube/18.11.34 (Linux; U; Android 11) gzip',
+          'X-Goog-Api-Format-Version': '1',
+        },
+      },
+    ];
 
-    for (int i = 0; i < clients.length; i++) {
-      debugPrint('Trying client: ${clientNames[i]}');
-
-      final headers = <String, String>{
-        'Content-Type': 'application/json',
-        'Cookie': auth.buildCookieHeader(),
-        'Authorization': auth.buildSapisidHash(),
-        'X-Origin': 'https://music.youtube.com',
-        'Referer': 'https://music.youtube.com/',
-        'Origin': 'https://music.youtube.com',
-      };
-
+    for (final client in clients) {
+      final name = client['name'] as String;
       final response = await http.post(
-        Uri.parse('https://music.youtube.com/youtubei/v1/player'),
-        headers: headers,
-        body: clients[i],
+        Uri.parse('https://www.youtube.com/youtubei/v1/player'),
+        headers: Map<String, String>.from(client['headers'] as Map),
+        body: client['body'] as String,
       );
 
       if (response.statusCode != 200) {
-        debugInfo = '${clientNames[i]}: HTTP ${response.statusCode}';
+        logs.add('[$name] HTTP ${response.statusCode}');
         continue;
       }
 
       final json = jsonDecode(response.body) as Map<String, dynamic>;
-      final playabilityStatus = json['playabilityStatus']?['status'];
+      final status = json['playabilityStatus']?['status'];
+      final reason = json['playabilityStatus']?['reason'] ?? '';
 
-      if (playabilityStatus != 'OK') {
-        debugInfo =
-            '${clientNames[i]}: status=$playabilityStatus\n'
-            'reason=${json['playabilityStatus']?['reason']}';
+      if (status != 'OK') {
+        logs.add('[$name] status=$status reason=$reason');
         continue;
       }
 
@@ -134,84 +196,42 @@ class AudioPlayerService extends ChangeNotifier {
       final regularFormats = (json['streamingData']?['formats'] as List? ?? []);
       final allFormats = [...adaptiveFormats, ...regularFormats];
 
-      // Check which formats have plain URLs vs cipher
-      final withUrl = allFormats.where((f) => f['url'] != null).toList();
-      final withCipher = allFormats
-          .where((f) => f['signatureCipher'] != null || f['cipher'] != null)
-          .toList();
-
-      debugPrint(
-        '${clientNames[i]}: ${allFormats.length} formats, '
-        '${withUrl.length} with url, ${withCipher.length} with cipher',
-      );
-
-      final audioWithUrl = withUrl
+      final audioWithUrl = allFormats
           .where(
-            (f) => (f['mimeType'] as String?)?.startsWith('audio/') == true,
+            (f) =>
+                (f['mimeType'] as String?)?.startsWith('audio/') == true &&
+                f['url'] != null,
           )
           .toList();
+
+      final audioWithCipher = allFormats
+          .where(
+            (f) =>
+                (f['mimeType'] as String?)?.startsWith('audio/') == true &&
+                (f['signatureCipher'] != null || f['cipher'] != null),
+          )
+          .toList();
+
+      logs.add(
+        '[$name] OK — audioWithUrl=${audioWithUrl.length} '
+        'audioWithCipher=${audioWithCipher.length} '
+        'total=${allFormats.length}',
+      );
 
       if (audioWithUrl.isNotEmpty) {
         audioWithUrl.sort(
           (a, b) => ((b['averageBitrate'] ?? b['bitrate'] ?? 0) as int)
               .compareTo((a['averageBitrate'] ?? a['bitrate'] ?? 0) as int),
         );
-        debugInfo =
-            '✅ ${clientNames[i]}: ${audioWithUrl.length} audio formats found';
+        debugInfo = '✅ $name worked!\n\n${logs.join('\n')}';
         notifyListeners();
         return audioWithUrl.first['url'] as String;
       }
-
-      // If we have cipher formats, report it clearly
-      if (withCipher.isNotEmpty) {
-        debugInfo =
-            '${clientNames[i]}: ${withCipher.length} cipher-only formats '
-            '(no plain URL) — trying next client...';
-      } else {
-        debugInfo = '${clientNames[i]}: 0 audio formats at all';
-      }
     }
 
-    // All clients failed
+    debugInfo = 'All clients failed:\n${logs.join('\n')}';
     notifyListeners();
     return null;
-  }
-
-  // TVHTML5_SIMPLY_EMBEDDED_PLAYER — known to skip cipher on many videos
-  String _buildTvEmbeddedBody(String videoId) {
-    return jsonEncode({
-      'videoId': videoId,
-      'context': {
-        'client': {
-          'clientName': 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
-          'clientVersion': '2.0',
-          'hl': 'en',
-          'gl': 'US',
-          'utcOffsetMinutes': 0,
-        },
-        'thirdParty': {'embedUrl': 'https://music.youtube.com'},
-      },
-    });
-  }
-
-  // IOS client — also tends to return plain URLs
-  String _buildIosBody(String videoId) {
-    return jsonEncode({
-      'videoId': videoId,
-      'context': {
-        'client': {
-          'clientName': 'IOS',
-          'clientVersion': '19.09.3',
-          'deviceMake': 'Apple',
-          'deviceModel': 'iPhone16,2',
-          'osName': 'iPhone',
-          'osVersion': '17.4.0.21E219',
-          'hl': 'en',
-          'gl': 'US',
-          'utcOffsetMinutes': 0,
-        },
-      },
-    });
   }
 
   Future<String?> _resolveVideoIdFromPlaylist(String playlistId) async {
