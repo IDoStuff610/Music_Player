@@ -84,19 +84,52 @@ class AudioPlayerService extends ChangeNotifier {
 
   Future<String?> _fetchStreamUrl(String videoId) async {
     final auth = _getAuth();
-
     if (auth == null) {
       debugInfo = 'auth is null — no cookies found';
       notifyListeners();
       return null;
     }
 
-    // Collect logs from every client attempt
     final logs = <String>[];
 
+    // Each client has its own correct API key + body + headers
     final clients = <Map<String, dynamic>>[
+      // 1. ANDROID with CgIQBg param — the known working bypass
       {
-        'name': 'TVHTML5_SIMPLY_EMBEDDED',
+        'name': 'ANDROID+CgIQBg',
+        'url':
+            'https://www.youtube.com/youtubei/v1/player'
+            '?key=AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w',
+        'headers': {
+          'Content-Type': 'application/json',
+          'User-Agent':
+              'com.google.android.youtube/18.11.34(Linux; U; Android 11) gzip',
+          'X-Goog-Api-Format-Version': '1',
+        },
+        'body': jsonEncode({
+          'videoId': videoId,
+          'params': 'CgIQBg==', // integrity bypass param
+          'context': {
+            'client': {
+              'clientName': 'ANDROID',
+              'clientVersion': '18.11.34',
+              'androidSdkVersion': 30,
+              'hl': 'en',
+              'gl': 'US',
+              'utcOffsetMinutes': 0,
+            },
+          },
+        }),
+      },
+      // 2. TVHTML5 embedded — no API key needed, no auth
+      {
+        'name': 'TVHTML5_EMBEDDED',
+        'url': 'https://www.youtube.com/youtubei/v1/player',
+        'headers': {
+          'Content-Type': 'application/json',
+          'Origin': 'https://www.youtube.com',
+          'Referer': 'https://www.youtube.com/',
+        },
         'body': jsonEncode({
           'videoId': videoId,
           'context': {
@@ -107,20 +140,22 @@ class AudioPlayerService extends ChangeNotifier {
               'gl': 'US',
               'utcOffsetMinutes': 0,
             },
-            'thirdParty': {'embedUrl': 'https://music.youtube.com'},
+            'thirdParty': {'embedUrl': 'https://www.youtube.com'},
           },
         }),
-        'headers': {
-          'Content-Type': 'application/json',
-          'Cookie': auth.buildCookieHeader(),
-          'Authorization': auth.buildSapisidHash(),
-          'X-Origin': 'https://music.youtube.com',
-          'Referer': 'https://music.youtube.com/',
-          'Origin': 'https://music.youtube.com',
-        },
       },
+      // 3. IOS with correct version and API key
       {
         'name': 'IOS',
+        'url':
+            'https://www.youtube.com/youtubei/v1/player'
+            '?key=AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc',
+        'headers': {
+          'Content-Type': 'application/json',
+          'User-Agent':
+              'com.google.ios.youtube/19.09.3 (iPhone16,2; U; CPU iOS 17_4 like Mac OS X)',
+          'X-Goog-Api-Format-Version': '1',
+        },
         'body': jsonEncode({
           'videoId': videoId,
           'context': {
@@ -137,95 +172,66 @@ class AudioPlayerService extends ChangeNotifier {
             },
           },
         }),
-        // IOS client — NO auth headers, send unauthenticated
-        'headers': {
-          'Content-Type': 'application/json',
-          'User-Agent':
-              'com.google.ios.youtube/19.09.3 (iPhone16,2; U; CPU iOS 17_4_0 like Mac OS X)',
-        },
-      },
-      {
-        'name': 'ANDROID',
-        'body': jsonEncode({
-          'videoId': videoId,
-          'context': {
-            'client': {
-              'clientName': 'ANDROID',
-              'clientVersion': '18.11.34',
-              'androidSdkVersion': 30,
-              'hl': 'en',
-              'gl': 'US',
-              'utcOffsetMinutes': 0,
-            },
-          },
-        }),
-        // ANDROID client — NO auth headers either
-        'headers': {
-          'Content-Type': 'application/json',
-          'User-Agent':
-              'com.google.android.youtube/18.11.34 (Linux; U; Android 11) gzip',
-          'X-Goog-Api-Format-Version': '1',
-        },
       },
     ];
 
     for (final client in clients) {
       final name = client['name'] as String;
-      final response = await http.post(
-        Uri.parse('https://www.youtube.com/youtubei/v1/player'),
-        headers: Map<String, String>.from(client['headers'] as Map),
-        body: client['body'] as String,
-      );
-
-      if (response.statusCode != 200) {
-        logs.add('[$name] HTTP ${response.statusCode}');
-        continue;
-      }
-
-      final json = jsonDecode(response.body) as Map<String, dynamic>;
-      final status = json['playabilityStatus']?['status'];
-      final reason = json['playabilityStatus']?['reason'] ?? '';
-
-      if (status != 'OK') {
-        logs.add('[$name] status=$status reason=$reason');
-        continue;
-      }
-
-      final adaptiveFormats =
-          (json['streamingData']?['adaptiveFormats'] as List? ?? []);
-      final regularFormats = (json['streamingData']?['formats'] as List? ?? []);
-      final allFormats = [...adaptiveFormats, ...regularFormats];
-
-      final audioWithUrl = allFormats
-          .where(
-            (f) =>
-                (f['mimeType'] as String?)?.startsWith('audio/') == true &&
-                f['url'] != null,
-          )
-          .toList();
-
-      final audioWithCipher = allFormats
-          .where(
-            (f) =>
-                (f['mimeType'] as String?)?.startsWith('audio/') == true &&
-                (f['signatureCipher'] != null || f['cipher'] != null),
-          )
-          .toList();
-
-      logs.add(
-        '[$name] OK — audioWithUrl=${audioWithUrl.length} '
-        'audioWithCipher=${audioWithCipher.length} '
-        'total=${allFormats.length}',
-      );
-
-      if (audioWithUrl.isNotEmpty) {
-        audioWithUrl.sort(
-          (a, b) => ((b['averageBitrate'] ?? b['bitrate'] ?? 0) as int)
-              .compareTo((a['averageBitrate'] ?? a['bitrate'] ?? 0) as int),
+      try {
+        final response = await http.post(
+          Uri.parse(client['url'] as String),
+          headers: Map<String, String>.from(client['headers'] as Map),
+          body: client['body'] as String,
         );
-        debugInfo = '✅ $name worked!\n\n${logs.join('\n')}';
-        notifyListeners();
-        return audioWithUrl.first['url'] as String;
+
+        if (response.statusCode != 200) {
+          logs.add('[$name] HTTP ${response.statusCode}');
+          continue;
+        }
+
+        final json = jsonDecode(response.body) as Map<String, dynamic>;
+        final status = json['playabilityStatus']?['status'];
+        final reason = json['playabilityStatus']?['reason'] ?? '';
+
+        if (status != 'OK') {
+          logs.add('[$name] status=$status reason=$reason');
+          continue;
+        }
+
+        final adaptiveFormats =
+            (json['streamingData']?['adaptiveFormats'] as List? ?? []);
+        final regularFormats =
+            (json['streamingData']?['formats'] as List? ?? []);
+        final allFormats = [...adaptiveFormats, ...regularFormats];
+
+        final audioWithUrl = allFormats
+            .where(
+              (f) =>
+                  (f['mimeType'] as String?)?.startsWith('audio/') == true &&
+                  f['url'] != null,
+            )
+            .toList();
+
+        final cipherCount = allFormats
+            .where((f) => f['signatureCipher'] != null || f['cipher'] != null)
+            .length;
+
+        logs.add(
+          '[$name] OK total=${allFormats.length} '
+          'audioWithUrl=${audioWithUrl.length} cipher=$cipherCount',
+        );
+
+        if (audioWithUrl.isNotEmpty) {
+          audioWithUrl.sort(
+            (a, b) => ((b['averageBitrate'] ?? b['bitrate'] ?? 0) as int)
+                .compareTo((a['averageBitrate'] ?? a['bitrate'] ?? 0) as int),
+          );
+          debugInfo = '✅ $name worked!\n${logs.join('\n')}';
+          notifyListeners();
+          return audioWithUrl.first['url'] as String;
+        }
+      } catch (e) {
+        logs.add('[$name] exception: $e');
       }
     }
 
