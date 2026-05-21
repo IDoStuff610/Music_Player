@@ -51,14 +51,20 @@ class AudioPlayerService extends ChangeNotifier {
         return;
       }
 
-      final streamUrl = await _fetchStreamUrl(videoId);
+      final result = await _fetchStreamUrl(videoId);
 
-      if (streamUrl == null) {
+      if (result == null) {
         error = 'Could not get stream URL';
         isLoading = false;
         notifyListeners();
         return;
       }
+
+      final streamUrl = result['url']!;
+      final mimeType = result['mimeType'];
+
+      debugPrint('▶️ Playing: $streamUrl');
+      debugPrint('▶️ mimeType: $mimeType');
 
       await _player.setAudioSource(
         AudioSource.uri(
@@ -77,39 +83,72 @@ class AudioPlayerService extends ChangeNotifier {
       await _player.play();
     } catch (e) {
       error = e.toString();
+      debugInfo = (debugInfo ?? '') + '\nPlayer error: $e';
     } finally {
       isLoading = false;
       notifyListeners();
     }
   }
 
-  Future<String?> _fetchStreamUrl(String videoId) async {
+  Future<Map<String, String>?> _fetchStreamUrl(String videoId) async {
     final yt = YoutubeExplode();
     try {
       final manifest = await yt.videos.streamsClient.getManifest(videoId);
 
-      final audioStreams = manifest.audioOnly.sortByBitrate();
-      if (audioStreams.isEmpty) {
+      // Log ALL audio streams so we can see what's available
+      final allAudio = manifest.audioOnly.sortByBitrate();
+      final logLines = <String>['All audio streams:'];
+      for (final s in allAudio) {
+        logLines.add('  ${s.bitrate} | ${s.codec} | ${s.container}');
+      }
+      debugPrint(logLines.join('\n'));
+
+      if (allAudio.isEmpty) {
         debugInfo = 'No audio streams found';
         notifyListeners();
         return null;
       }
 
-      final streamInfo = audioStreams.last;
-      final url = streamInfo.url.toString();
+      // Prefer mp4/aac streams — iOS handles these natively
+      // mp4a.40.2 = AAC-LC (best), mp4a.40.5 = HE-AAC (low bitrate fallback)
+      final mp4Streams = allAudio
+          .where(
+            (s) =>
+                s.codec.mimeType.contains('mp4') &&
+                s.codec.toString().contains('mp4a.40.2'),
+          ) // AAC-LC only
+          .toList();
 
+      // Fall back to any mp4 stream
+      final anyMp4 = allAudio
+          .where((s) => s.codec.mimeType.contains('mp4'))
+          .toList();
+
+      // Fall back to any stream at all
+      final chosen = mp4Streams.isNotEmpty
+          ? mp4Streams
+                .last // highest bitrate AAC-LC
+          : anyMp4.isNotEmpty
+          ? anyMp4
+                .last // highest bitrate mp4
+          : allAudio.last; // anything
+
+      final url = chosen.url.toString();
       debugInfo =
-          '✅ Got stream via youtube_explode\n'
-          'bitrate: ${streamInfo.bitrate}\n'
-          'codec: ${streamInfo.codec}';
+          '✅ Stream chosen:\n'
+          'bitrate: ${chosen.bitrate}\n'
+          'codec: ${chosen.codec}\n'
+          'container: ${chosen.container}\n'
+          'all streams: ${allAudio.length}';
       notifyListeners();
-      return url;
+
+      return {'url': url, 'mimeType': chosen.codec.mimeType};
     } catch (e) {
       debugInfo = 'youtube_explode error: $e';
       notifyListeners();
       return null;
     } finally {
-      yt.close(); // always close, even on error
+      yt.close();
     }
   }
 
