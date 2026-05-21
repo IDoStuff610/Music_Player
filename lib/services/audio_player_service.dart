@@ -101,16 +101,13 @@ class AudioPlayerService extends ChangeNotifier {
     }
   }
 
-  /// Calls YouTube's internal InnerTube /player endpoint using the user's
-  /// authenticated cookies. This is exactly what OuterTune/InnerTune do on
-  /// Android — impersonate the iOS YouTube client so we get direct,
-  /// non-throttled, signed audio URLs.
+  /// Calls the YouTube Music InnerTube /player endpoint using the user's
+  /// existing YT Music cookies. Uses the WEB_REMIX client — the same client
+  /// the cookies were issued for — so there are no auth mismatches and no
+  /// rate limiting from anonymous scraping.
   ///
-  /// Why this works when youtube_explode_dart doesn't:
-  ///   - youtube_explode scrapes youtube.com/watch as an anonymous client
-  ///     → YouTube rate-limits it after a few requests
-  ///   - This call uses the user's SAPISID cookies so YouTube treats it as
-  ///     an authenticated first-party iOS client → no rate limiting
+  /// Falls back to the ANDROID_MUSIC client if WEB_REMIX returns no URLs,
+  /// since Android clients return unsigned direct URLs on some videos.
   Future<String?> _getStreamUrlFromInnertube(String videoId) async {
     final auth = _getAuth();
     if (auth == null) {
@@ -119,120 +116,161 @@ class AudioPlayerService extends ChangeNotifier {
       return null;
     }
 
-    try {
-      debugInfo = 'Calling InnerTube player API...';
-      notifyListeners();
-
-      // Impersonate the official iOS YouTube app.
-      // The IOS client returns plain HTTPS MP4 URLs that AVPlayer can play
-      // natively on iPhone — no deciphering needed.
-      final response = await http.post(
-        Uri.parse(
-          'https://www.youtube.com/youtubei/v1/player?prettyPrint=false',
-        ),
-        headers: {
-          'Content-Type': 'application/json',
-          'Cookie': auth.buildCookieHeader(),
-          'Authorization': auth.buildSapisidHash(),
-          'X-Origin': 'https://www.youtube.com',
-          'Origin': 'https://www.youtube.com',
-          'Referer': 'https://www.youtube.com/',
-          // Must match the iOS client below or YouTube may reject the request
-          'User-Agent':
-              'com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X)',
+    // Try clients in order of preference
+    final clients = [
+      _ClientConfig(
+        name: 'WEB_REMIX',
+        version: '1.20240101.00.00',
+        baseUrl: 'https://music.youtube.com',
+        // key is the same one already used for browse calls
+        apiKey: 'AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30',
+        clientNameHeader: '67',
+        userAgent:
+            'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) '
+            'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 '
+            'Mobile/15E148 Safari/604.1',
+      ),
+      _ClientConfig(
+        name: 'ANDROID_MUSIC',
+        version: '7.27.52',
+        baseUrl: 'https://music.youtube.com',
+        apiKey: 'AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30',
+        clientNameHeader: '21',
+        userAgent:
+            'com.google.android.apps.youtube.music/7.27.52 (Linux; U; '
+            'Android 14; Pixel 8 Build/UP1A.231005.007) gzip',
+        extraContext: {
+          'androidSdkVersion': 34,
+          'osName': 'Android',
+          'osVersion': '14',
         },
-        body: jsonEncode({
-          'videoId': videoId,
-          'contentCheckOk': true,
-          'racyCheckOk': true,
-          'context': {
-            'client': {
-              'clientName': 'IOS',
-              'clientVersion': '19.29.1',
-              'deviceMake': 'Apple',
-              'deviceModel': 'iPhone16,2', // iPhone 15 Pro Max
-              'osName': 'iPhone',
-              'osVersion': '17.5.1.22F82',
-              'hl': 'en',
-              'gl': 'US',
-            },
-          },
-        }),
-      );
+      ),
+    ];
 
-      if (response.statusCode != 200) {
-        debugInfo = 'InnerTube player returned ${response.statusCode}';
-        notifyListeners();
-        return null;
-      }
-
-      final json = jsonDecode(response.body) as Map<String, dynamic>;
-
-      // Check playability status first
-      final status = json['playabilityStatus']?['status'] as String?;
-      if (status != null && status != 'OK') {
-        final reason = json['playabilityStatus']?['reason'] ?? 'Unknown';
-        debugInfo = 'Not playable: $status — $reason';
-        notifyListeners();
-        return null;
-      }
-
-      final adaptiveFormats =
-          json['streamingData']?['adaptiveFormats'] as List?;
-      final formats = json['streamingData']?['formats'] as List?;
-
-      // Prefer adaptive audio-only streams (better quality, audio-only)
-      final allAudio = <Map<String, dynamic>>[];
-
-      if (adaptiveFormats != null) {
-        for (final f in adaptiveFormats) {
-          final mime = f['mimeType']?.toString() ?? '';
-          if (mime.contains('audio')) {
-            allAudio.add(f as Map<String, dynamic>);
-          }
-        }
-      }
-
-      // Fall back to combined formats if no audio-only found
-      if (allAudio.isEmpty && formats != null) {
-        for (final f in formats) {
-          allAudio.add(f as Map<String, dynamic>);
-        }
-      }
-
-      if (allAudio.isEmpty) {
-        debugInfo = 'No audio formats in InnerTube response';
-        notifyListeners();
-        return null;
-      }
-
-      // Sort by bitrate, pick highest
-      allAudio.sort((a, b) {
-        final aBitrate = (a['bitrate'] as num?)?.toInt() ?? 0;
-        final bBitrate = (b['bitrate'] as num?)?.toInt() ?? 0;
-        return bBitrate.compareTo(aBitrate);
-      });
-
-      // Prefer m4a (mp4a.40.2 = AAC-LC) — natively supported on iOS
-      final m4aFormats = allAudio.where((f) {
-        final mime = f['mimeType']?.toString() ?? '';
-        return mime.contains('mp4a.40.2') || mime.contains('audio/mp4');
-      }).toList();
-
-      final chosen = m4aFormats.isNotEmpty ? m4aFormats.first : allAudio.first;
-      final url = chosen['url'] as String?;
-
-      final bitrate = chosen['bitrate'];
-      final mime = chosen['mimeType'];
-      debugInfo = '✅ InnerTube stream: $bitrate bps | $mime';
+    for (final client in clients) {
+      debugInfo = 'Trying ${client.name} client...';
       notifyListeners();
 
-      return url;
-    } catch (e) {
-      debugInfo = 'InnerTube error: $e';
+      try {
+        final url = await _tryClient(videoId, auth, client);
+        if (url != null) return url;
+      } catch (e) {
+        debugInfo = '${client.name} error: $e';
+        notifyListeners();
+      }
+    }
+
+    debugInfo = 'All InnerTube clients failed';
+    notifyListeners();
+    return null;
+  }
+
+  Future<String?> _tryClient(
+    String videoId,
+    YTMusicAuthService auth,
+    _ClientConfig client,
+  ) async {
+    final response = await http.post(
+      Uri.parse(
+        '${client.baseUrl}/youtubei/v1/player'
+        '?key=${client.apiKey}&prettyPrint=false',
+      ),
+      headers: {
+        'Content-Type': 'application/json',
+        'Cookie': auth.buildCookieHeader(),
+        'Authorization': auth.buildSapisidHash(),
+        'X-Origin': client.baseUrl,
+        'Origin': client.baseUrl,
+        'Referer': '${client.baseUrl}/',
+        'User-Agent': client.userAgent,
+        'X-Youtube-Client-Name': client.clientNameHeader,
+        'X-Youtube-Client-Version': client.version,
+      },
+      body: jsonEncode({
+        'videoId': videoId,
+        'contentCheckOk': true,
+        'racyCheckOk': true,
+        'context': {
+          'client': {
+            'clientName': client.name,
+            'clientVersion': client.version,
+            'hl': 'en',
+            'gl': 'US',
+            ...?client.extraContext,
+          },
+        },
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      debugInfo = '${client.name} returned ${response.statusCode}';
       notifyListeners();
       return null;
     }
+
+    final json = jsonDecode(response.body) as Map<String, dynamic>;
+
+    final status = json['playabilityStatus']?['status'] as String?;
+    if (status != null && status != 'OK') {
+      final reason = json['playabilityStatus']?['reason'] ?? 'Unknown';
+      debugInfo = '${client.name} not playable: $status — $reason';
+      notifyListeners();
+      return null;
+    }
+
+    final adaptiveFormats =
+        json['streamingData']?['adaptiveFormats'] as List? ?? [];
+    final regularFormats = json['streamingData']?['formats'] as List? ?? [];
+
+    final allAudio = <Map<String, dynamic>>[];
+
+    // Prefer adaptive (audio-only) streams
+    for (final f in adaptiveFormats) {
+      final mime = (f as Map<String, dynamic>)['mimeType']?.toString() ?? '';
+      if (mime.contains('audio')) allAudio.add(f);
+    }
+
+    // Fall back to muxed formats
+    if (allAudio.isEmpty) {
+      for (final f in regularFormats) {
+        allAudio.add(f as Map<String, dynamic>);
+      }
+    }
+
+    if (allAudio.isEmpty) {
+      debugInfo = '${client.name}: no audio formats in response';
+      notifyListeners();
+      return null;
+    }
+
+    // Sort highest bitrate first
+    allAudio.sort((a, b) {
+      final aBr = (a['bitrate'] as num?)?.toInt() ?? 0;
+      final bBr = (b['bitrate'] as num?)?.toInt() ?? 0;
+      return bBr.compareTo(aBr);
+    });
+
+    // Prefer AAC-LC (mp4a.40.2) — natively supported on iOS AVPlayer
+    final m4a = allAudio.where((f) {
+      final mime = f['mimeType']?.toString() ?? '';
+      return mime.contains('mp4a.40.2') || mime.contains('audio/mp4');
+    }).toList();
+
+    final chosen = m4a.isNotEmpty ? m4a.first : allAudio.first;
+    final streamUrl = chosen['url'] as String?;
+
+    if (streamUrl == null) {
+      debugInfo = '${client.name}: stream URL is null (may need cipher)';
+      notifyListeners();
+      return null;
+    }
+
+    final bitrate = chosen['bitrate'];
+    final mime = chosen['mimeType'];
+    debugInfo = '✅ ${client.name}: $bitrate bps | $mime';
+    notifyListeners();
+
+    return streamUrl;
   }
 
   /// Downloads the stream to a temp file using our own authenticated HTTP
@@ -356,4 +394,25 @@ class AudioPlayerService extends ChangeNotifier {
     _player.dispose();
     super.dispose();
   }
+}
+
+/// Describes an InnerTube client configuration to try for stream URL extraction
+class _ClientConfig {
+  final String name;
+  final String version;
+  final String baseUrl;
+  final String apiKey;
+  final String clientNameHeader;
+  final String userAgent;
+  final Map<String, dynamic>? extraContext;
+
+  const _ClientConfig({
+    required this.name,
+    required this.version,
+    required this.baseUrl,
+    required this.apiKey,
+    required this.clientNameHeader,
+    required this.userAgent,
+    this.extraContext,
+  });
 }
