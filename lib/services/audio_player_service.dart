@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:just_audio/just_audio.dart';
@@ -61,29 +62,78 @@ class AudioPlayerService extends ChangeNotifier {
       }
 
       final streamUrl = result['url']!;
-      final mimeType = result['mimeType'];
 
-      debugPrint('▶️ Playing: $streamUrl');
-      debugPrint('▶️ mimeType: $mimeType');
+      // Step 1: verify the URL is actually reachable before giving it to just_audio
+      try {
+        final probe = await http
+            .head(
+              Uri.parse(streamUrl),
+              headers: {
+                'User-Agent':
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                    'AppleWebKit/537.36 (KHTML, like Gecko) '
+                    'Chrome/120.0.0.0 Safari/537.36',
+                'Referer': 'https://www.youtube.com/',
+              },
+            )
+            .timeout(const Duration(seconds: 10));
 
-      await _player.setAudioSource(
-        AudioSource.uri(
-          Uri.parse(streamUrl),
-          tag: MediaItem(
-            id: videoId,
-            title: item.title,
-            artist: item.subtitle ?? '',
-            artUri: item.thumbnailUrl != null
-                ? Uri.parse(item.thumbnailUrl!)
-                : null,
+        debugInfo =
+            (debugInfo ?? '') +
+            '\nURL probe: HTTP ${probe.statusCode}'
+                '\ncontent-type: ${probe.headers['content-type']}'
+                '\ncontent-length: ${probe.headers['content-length']}';
+        notifyListeners();
+
+        if (probe.statusCode == 403) {
+          error = 'Stream URL expired (403) — try again';
+          isLoading = false;
+          notifyListeners();
+          return;
+        }
+      } catch (e) {
+        debugInfo = (debugInfo ?? '') + '\nURL probe failed: $e';
+        notifyListeners();
+      }
+
+      // Step 2: set audio source — try with headers first
+      try {
+        await _player.setAudioSource(
+          AudioSource.uri(
+            Uri.parse(streamUrl),
+            headers: {
+              'User-Agent':
+                  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                  'AppleWebKit/537.36 (KHTML, like Gecko) '
+                  'Chrome/120.0.0.0 Safari/537.36',
+              'Referer': 'https://www.youtube.com/',
+              'Origin': 'https://www.youtube.com',
+            },
+            tag: MediaItem(
+              id: videoId,
+              title: item.title,
+              artist: item.subtitle ?? '',
+              artUri: item.thumbnailUrl != null
+                  ? Uri.parse(item.thumbnailUrl!)
+                  : null,
+            ),
           ),
-        ),
-      );
+        );
+      } on PlayerException catch (e) {
+        debugInfo =
+            (debugInfo ?? '') +
+            '\nsetAudioSource failed: code=${e.code} msg=${e.message}';
+        notifyListeners();
+        error = 'Player error ${e.code}: ${e.message}';
+        isLoading = false;
+        notifyListeners();
+        return;
+      }
 
       await _player.play();
     } catch (e) {
       error = e.toString();
-      debugInfo = (debugInfo ?? '') + '\nPlayer error: $e';
+      debugInfo = (debugInfo ?? '') + '\nOuter catch: $e';
     } finally {
       isLoading = false;
       notifyListeners();
@@ -94,14 +144,7 @@ class AudioPlayerService extends ChangeNotifier {
     final yt = YoutubeExplode();
     try {
       final manifest = await yt.videos.streamsClient.getManifest(videoId);
-
-      // Log ALL audio streams so we can see what's available
       final allAudio = manifest.audioOnly.sortByBitrate();
-      final logLines = <String>['All audio streams:'];
-      for (final s in allAudio) {
-        logLines.add('  ${s.bitrate} | ${s.codec} | ${s.container}');
-      }
-      debugPrint(logLines.join('\n'));
 
       if (allAudio.isEmpty) {
         debugInfo = 'No audio streams found';
@@ -109,40 +152,24 @@ class AudioPlayerService extends ChangeNotifier {
         return null;
       }
 
-      // Prefer mp4/aac streams — iOS handles these natively
-      // mp4a.40.2 = AAC-LC (best), mp4a.40.5 = HE-AAC (low bitrate fallback)
-      final mp4Streams = allAudio
-          .where(
-            (s) =>
-                s.codec.mimeType.contains('mp4') &&
-                s.codec.toString().contains('mp4a.40.2'),
-          ) // AAC-LC only
+      // Log all available streams
+      final logLines = <String>['Available streams (${allAudio.length}):'];
+      for (final s in allAudio) {
+        logLines.add('  ${s.bitrate} | ${s.codec}');
+      }
+      debugPrint(logLines.join('\n'));
+
+      // Prefer AAC-LC (mp4a.40.2) — most compatible with iOS AVPlayer
+      final aacLC = allAudio
+          .where((s) => s.codec.toString().contains('mp4a.40.2'))
           .toList();
 
-      // Fall back to any mp4 stream
-      final anyMp4 = allAudio
-          .where((s) => s.codec.mimeType.contains('mp4'))
-          .toList();
+      final chosen = aacLC.isNotEmpty ? aacLC.last : allAudio.last;
 
-      // Fall back to any stream at all
-      final chosen = mp4Streams.isNotEmpty
-          ? mp4Streams
-                .last // highest bitrate AAC-LC
-          : anyMp4.isNotEmpty
-          ? anyMp4
-                .last // highest bitrate mp4
-          : allAudio.last; // anything
-
-      final url = chosen.url.toString();
-      debugInfo =
-          '✅ Stream chosen:\n'
-          'bitrate: ${chosen.bitrate}\n'
-          'codec: ${chosen.codec}\n'
-          'container: ${chosen.container}\n'
-          'all streams: ${allAudio.length}';
+      debugInfo = '✅ Stream: ${chosen.bitrate} | ${chosen.codec}';
       notifyListeners();
 
-      return {'url': url, 'mimeType': chosen.codec.mimeType};
+      return {'url': chosen.url.toString()};
     } catch (e) {
       debugInfo = 'youtube_explode error: $e';
       notifyListeners();
